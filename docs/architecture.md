@@ -176,6 +176,32 @@ Enable with `EDGE_REPUTATION_ENABLED=true` plus `CLOUDFLARE_API_TOKEN`, `CLOUDFL
 
 Implementation: `reputation/edge_kv.py` (`CloudflareKVClient`).
 
+#### Swarm Routing (M4 — initial)
+
+Multi-agent intent assignment using reputation + capability:
+
+```
+IntentSignal → IntentRouter.route()
+        │
+        ├── AgentRegistry.list_available()
+        ├── ReputationLayer.rank_agents(use_edge_data=True)
+        ├── capability match (intent label vs goals/specialties)
+        └── combined_score = reputation × 0.6 + capability × 0.4 (load-adjusted)
+
+SwarmCoordinator.dispatch()
+        ├── BEST_SINGLE      → top-1 agent
+        └── BROADCAST_TOP_N  → top N agents (default 3)
+```
+
+| Module | Role |
+|--------|------|
+| `agents/registry.py` | Agent directory (goals, specialties, load) |
+| `fabric/router.py` | Intent → agent routing |
+| `fabric/swarm.py` | Swarm dispatch strategies |
+| `fabric/capabilities.py` | Intent label → specialty matching |
+
+Demo: `python -m demo --swarm-only`
+
 ### 6. Demo & Bootstrap Layer (`demo/`)
 
 Interactive showcase without API keys:

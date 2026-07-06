@@ -26,6 +26,7 @@ from demo.bootstrap import (  # noqa: E402
     run_full_demo,
     run_multi_agent_ranking_demo,
     run_single_agent_demo,
+    run_swarm_routing_demo,
 )
 
 DEMO_EPILOG = """
@@ -49,6 +50,10 @@ Demo phases
     Competing on overlapping commercial intents with different cycle counts.
     Demonstrates ReputationLayer.rank_agents() and selection weight
     (visibility × score/100) — the primitive for Fabric swarm routing.
+
+  Swarm routing phase (--swarm-only)
+    Routes purchase, research, and support intents via IntentRouter +
+    SwarmCoordinator. Shows capability matching + edge-aware reputation.
 
 Output modes
 ────────────
@@ -83,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Run only the multi-agent ranking demo",
     )
     parser.add_argument(
+        "--swarm-only",
+        action="store_true",
+        help="Run swarm intent routing demo (capability + reputation)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print full formatted resonant messages per cycle",
@@ -109,6 +119,12 @@ def main(argv: list[str] | None = None) -> int:
             data_dir=args.data_dir,
             print_fn=print,
             verbose=verbose,
+            show_banners=not args.quiet,
+        )
+    elif args.swarm_only:
+        run_swarm_routing_demo(
+            data_dir=args.data_dir,
+            print_fn=print,
             show_banners=not args.quiet,
         )
     else:

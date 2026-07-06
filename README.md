@@ -41,6 +41,7 @@ You should see:
 python -m demo --help    # explain each demo phase and flag
 python -m demo --single-only
 python -m demo --multi-only
+python -m demo --swarm-only  # intent routing across agent swarm
 python -m demo --verbose # full formatted messages per cycle
 ```
 
@@ -234,12 +235,15 @@ See [.env.example](.env.example) for all variables with inline comments.
 | `python -m demo` | Full showcase: single agent + multi-agent ranking |
 | `python -m demo --single-only` | One agent, four intent cycles, reputation stats |
 | `python -m demo --multi-only` | Three agents, divergent scores, ranking table |
+| `python -m demo --swarm-only` | Route intents by reputation + capability matching |
 | `python -m demo --verbose` | Full formatted resonant messages per cycle |
 | `python -m demo --data-dir ./tmp` | Custom demo data directory |
 
 **Single-agent phase** demonstrates: intent harvesting → template/Grok generation → value injection → Arcly dry-run handoff → score reflection.
 
 **Multi-agent phase** demonstrates: shared `ResonanceScoreManager`, `rank_agents()` by selection weight, swarm routing primitive.
+
+**Swarm routing** (`--swarm-only`) demonstrates: `AgentRegistry`, `IntentRouter`, and `SwarmCoordinator` assigning purchase/research/support intents to the best-matched agents.
 
 ---
 

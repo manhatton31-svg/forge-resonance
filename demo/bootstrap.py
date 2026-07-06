@@ -21,6 +21,8 @@ from generation.resonance_engine import ResonanceEngine
 from harvesting.intent_harvester import EmbeddingIntentHarvester
 from injection.value_injector import DeliveryMode, ValueInjector
 from integration.arcly_handoff import ArclyHandoff
+from agents.registry import AgentRegistry, RegisteredAgent
+from fabric.swarm import SwarmCoordinator, SwarmStrategy
 from reputation.score_layer import (
     AgentAnalytics,
     AgentReputation,
@@ -29,6 +31,7 @@ from reputation.score_layer import (
     ResonanceScoreManager,
     create_score_manager,
 )
+from core.resonance_agent import IntentSignal
 
 # Realistic intents that clear harvesting thresholds in local embedding mode.
 SINGLE_AGENT_INTENTS: tuple[str, ...] = (
@@ -442,6 +445,133 @@ def run_multi_agent_ranking_demo(
         )
 
     return ranked
+
+
+SWARM_ROUTING_INTENTS: tuple[tuple[str, str], ...] = (
+    (
+        "purchase_intent",
+        "I want to buy analytics software and need pricing for the enterprise plan",
+    ),
+    (
+        "research_intent",
+        "I'm researching project management tools and need a solid overview",
+    ),
+    (
+        "support_intent",
+        "I need support with my billing account and want to request a refund",
+    ),
+)
+
+SWARM_AGENT_SPECS: tuple[tuple[str, list[str], list[str]], ...] = (
+    (
+        "atlas-analytics",
+        ["maximize analytics conversion", "compare BI tools fairly"],
+        ["commercial", "analytics", "purchase"],
+    ),
+    (
+        "nova-research",
+        ["educate buyers during research phase"],
+        ["research", "education"],
+    ),
+    (
+        "echo-support",
+        ["resolve billing issues quickly"],
+        ["support", "billing"],
+    ),
+)
+
+
+def run_swarm_routing_demo(
+    *,
+    data_dir: Path | None = None,
+    print_fn: PrintFn = _default_print,
+    show_banners: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    Demonstrate intent routing across a small agent swarm.
+
+    Uses ``IntentRouter`` + ``SwarmCoordinator`` with reputation ranking
+    (edge-aware when ``EDGE_REPUTATION_ENABLED``).
+    """
+    base = data_dir or Path("data/demo")
+    manager, reputation = create_demo_stack(data_dir=base)
+
+    if show_banners:
+        banner("ForgeResonance — Swarm Routing Demo", print_fn=print_fn)
+        print_fn(
+            "  Routes intents to the best-suited agents by reputation + capability.\n"
+        )
+
+    registry = AgentRegistry()
+    agents: list[ResonanceAgent] = []
+    for name, goals, specialties in SWARM_AGENT_SPECS:
+        agent = create_demo_agent(name, goals, data_dir=base, score_manager=manager)
+        agents.append(agent)
+        registry.register(
+            RegisteredAgent(
+                agent_id=agent.agent_id,
+                name=agent.name,
+                goals=goals,
+                specialties=specialties,
+            )
+        )
+
+    swarm = SwarmCoordinator(registry, reputation)
+    for agent in agents:
+        swarm.bind_agent(agent)
+
+    for agent in agents:
+        run_agent_cycles_compact(
+            agent,
+            list(MULTI_AGENT_SCENARIOS.get(agent.name, SINGLE_AGENT_INTENTS[:2])),
+            print_fn=lambda _: None,
+        )
+
+    results: list[dict[str, Any]] = []
+    for intent_label, text in SWARM_ROUTING_INTENTS:
+        section(f"Route: {intent_label}", print_fn=print_fn)
+        signal = IntentSignal.from_context(
+            {"matched_intent": intent_label, "text": text},
+            confidence=0.85,
+        )
+        assignment = swarm.dispatch(
+            signal,
+            strategy=SwarmStrategy.BEST_SINGLE,
+            submit_intent=False,
+        )
+        if assignment.assignments:
+            best = assignment.assignments[0]
+            print_fn(
+                f"  → {best.agent_name}  "
+                f"(weight={best.selection_weight:.3f}, "
+                f"capability={best.capability_score:.2f}, "
+                f"source={best.score_source})"
+            )
+            results.append({
+                "intent": intent_label,
+                "agent": best.agent_name,
+                "weight": best.selection_weight,
+                "capability": best.capability_score,
+                "source": best.score_source,
+            })
+        else:
+            print_fn("  → no agent available")
+
+    section("Broadcast top 3 (purchase)", print_fn=print_fn)
+    purchase = IntentSignal.from_context(
+        {"matched_intent": "purchase_intent", "text": SWARM_ROUTING_INTENTS[0][1]},
+        confidence=0.9,
+    )
+    broadcast = swarm.dispatch(
+        purchase,
+        strategy=SwarmStrategy.BROADCAST_TOP_N,
+        top_n=3,
+        submit_intent=False,
+    )
+    names = [a.agent_name for a in broadcast.assignments]
+    print_fn(f"  Agents: {', '.join(names)}")
+
+    return results
 
 
 def run_full_demo(

@@ -79,11 +79,14 @@ Last updated: July 2026
 | Edge sync after `record_outcome()` | Done |
 | `resolve_score()` KV cold-read fallback | Done |
 | `EDGE_REPUTATION_ENABLED` config flag | Done |
+| `AgentRegistry` + `IntentRouter` + `SwarmCoordinator` | Done |
+| Capability-based intent routing | Done |
+| Demo: `python -m demo --swarm-only` | Done |
 
 Remaining:
 
 - [ ] Cloudflare Workers deployment for edge agents
-- [ ] Fabric router: weighted random selection via `selection_weight`
+- [ ] Weighted random selection (probabilistic routing via `selection_weight`)
 - [ ] Multi-agent collaboration protocol
 - [ ] Fabric-wide health dashboard (Axiom)
 - [ ] Decentralized score consensus (research)
@@ -122,7 +125,7 @@ Remaining:
 ## Immediate Next Steps
 
 1. **Edge Workers prototype** — single Worker agent + KV reputation read at edge
-2. **Swarm router** — weighted selection over `rank_agents()` output
+2. **Probabilistic swarm router** — weighted random selection over `rank_agents()`
 3. **KV backfill job** — bulk sync from Neon to KV for existing agents
 4. **Operator API** — `/api/agents` CRUD on Vercel
 
