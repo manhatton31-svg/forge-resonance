@@ -158,6 +158,34 @@ python -m demo --multi-only     # ranking showcase only
 
 No API keys required — uses template generation and in-memory reputation.
 
+## Arcly AI Closer Integration
+
+ForgeResonance hands qualified resonances to **Arcly** for conversion (email follow-up, offer presentation, close tracking).
+
+**Dry-run (default):** No `ARCLY_API_KEY` or local URL → simulated handoff with reputation context.
+
+**Live mode:** Set credentials and a production URL:
+
+```bash
+ARCLY_API_URL=https://your-arcly-instance.example.com
+ARCLY_API_KEY=your-secret-key
+ARCLY_MODE=live   # or auto (default)
+```
+
+Each handoff includes:
+- Formatted payload + offer bundle (for commercial intents)
+- Agent reputation (`resonance_score`, `visibility_multiplier`, `success_rate`, `trend`)
+
+**Two-way feedback:** Arcly reports conversion outcomes back via `report_outcome()` or the webhook:
+
+```bash
+POST /api/arcly_feedback
+Authorization: Bearer <ARCLY_API_KEY>
+{"agent_id": "...", "resonance_id": "...", "outcome": "success", "quality": 0.9}
+```
+
+This updates the agent's Resonance Score asynchronously.
+
 ## Current Status
 
 **Phase: M1 Foundation — Complete**

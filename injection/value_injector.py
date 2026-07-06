@@ -22,6 +22,7 @@ from core.resonance_agent import (
     ResonancePayload,
     ValueInjectorProtocol,
 )
+from integration.offer_framer import OfferFramer
 from utils.logging import setup_logging
 
 logger = setup_logging("forge.injection")
@@ -287,6 +288,9 @@ class ValueInjector(ValueInjectorProtocol):
         Formats the payload per delivery mode, optionally echoes to stdout,
         fires hooks, and attaches a handoff package to the payload.
         """
+        if signal is not None:
+            OfferFramer.frame(payload, signal)
+
         if not payload.content and not payload.value_proposition:
             logger.warning(
                 "Empty payload for resonance %s; injection failed",
@@ -308,11 +312,11 @@ class ValueInjector(ValueInjectorProtocol):
 
         formatted = self._format_message(payload)
         card = PayloadFormatter.build_structured_card(payload)
-        offer_pkg = (
-            PayloadFormatter.build_offer_package(payload)
-            if active_mode == DeliveryMode.OFFER_READY
-            else None
-        )
+        offer_pkg = None
+        if active_mode == DeliveryMode.OFFER_READY or payload.content.get("offer_ready"):
+            offer_pkg = PayloadFormatter.build_offer_package(payload)
+            if signal:
+                offer_pkg = {**OfferFramer.build_offer_bundle(payload, signal), **offer_pkg}
 
         delivery_body = self._resolve_delivery_body(
             active_mode, formatted, card, offer_pkg, payload
@@ -424,6 +428,10 @@ class ValueInjector(ValueInjectorProtocol):
             package["cta_label"] = fields["metadata"].get(
                 "cta_label", "View recommended offer"
             )
+
+        if signal and OfferFramer.should_frame(payload, signal):
+            package["offer_bundle"] = OfferFramer.build_offer_bundle(payload, signal)
+            package["offer_ready"] = True
 
         if signal:
             package["signal"] = {

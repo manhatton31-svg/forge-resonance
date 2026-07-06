@@ -78,6 +78,55 @@ GROK_MAX_TOKENS = int(os.getenv("GROK_MAX_TOKENS", "1024"))
 ARCLY_API_URL = os.getenv("ARCLY_API_URL", "http://localhost:8000")
 ARCLY_API_KEY = os.getenv("ARCLY_API_KEY", "")
 ARCLY_HANDOFF_TIMEOUT_SECONDS = int(os.getenv("ARCLY_HANDOFF_TIMEOUT", "30"))
+ARCLY_HANDOFF_MAX_RETRIES = int(os.getenv("ARCLY_HANDOFF_MAX_RETRIES", "2"))
+ARCLY_HANDOFF_RETRY_DELAY_SECONDS = float(
+    os.getenv("ARCLY_HANDOFF_RETRY_DELAY", "1.0")
+)
+# Mode: auto (live when key+url configured) | dry_run | live
+ARCLY_MODE = os.getenv("ARCLY_MODE", "auto").lower()
+ARCLY_FEEDBACK_ENABLED = os.getenv("ARCLY_FEEDBACK_ENABLED", "true").lower() == "true"
+ARCLY_DEFAULT_URL = "http://localhost:8000"
+
+
+@dataclass(frozen=True)
+class ArclyConfig:
+    """Arcly handoff configuration snapshot."""
+
+    api_url: str = ARCLY_API_URL
+    api_key: str = ARCLY_API_KEY
+    timeout_seconds: int = ARCLY_HANDOFF_TIMEOUT_SECONDS
+    max_retries: int = ARCLY_HANDOFF_MAX_RETRIES
+    retry_delay_seconds: float = ARCLY_HANDOFF_RETRY_DELAY_SECONDS
+    mode: str = ARCLY_MODE
+    feedback_enabled: bool = ARCLY_FEEDBACK_ENABLED
+
+    @property
+    def effective_mode(self) -> str:
+        if self.mode == "dry_run":
+            return "dry_run"
+        if self.mode == "live":
+            return "live"
+        # auto: live when credentials and non-local URL are set
+        if self.api_key and self.api_url.rstrip("/") != ARCLY_DEFAULT_URL:
+            return "live"
+        return "dry_run"
+
+    @property
+    def is_live(self) -> bool:
+        return self.effective_mode == "live"
+
+
+def load_arcly_config() -> ArclyConfig:
+    """Load Arcly configuration from environment."""
+    return ArclyConfig(
+        api_url=ARCLY_API_URL.rstrip("/"),
+        api_key=ARCLY_API_KEY,
+        timeout_seconds=ARCLY_HANDOFF_TIMEOUT_SECONDS,
+        max_retries=ARCLY_HANDOFF_MAX_RETRIES,
+        retry_delay_seconds=ARCLY_HANDOFF_RETRY_DELAY_SECONDS,
+        mode=ARCLY_MODE,
+        feedback_enabled=ARCLY_FEEDBACK_ENABLED,
+    )
 
 # ---------------------------------------------------------------------------
 # Observability (Sentry + Axiom + Cloudflare)
@@ -127,6 +176,8 @@ class ForgeConfig:
     xai_api_key: str = XAI_API_KEY
     arcly_api_url: str = ARCLY_API_URL
     arcly_api_key: str = ARCLY_API_KEY
+    arcly_mode: str = ARCLY_MODE
+    arcly_timeout_seconds: int = ARCLY_HANDOFF_TIMEOUT_SECONDS
     log_level: str = LOG_LEVEL
     resonance_score_default: float = RESONANCE_SCORE_DEFAULT
 

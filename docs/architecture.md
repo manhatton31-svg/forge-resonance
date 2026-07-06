@@ -267,15 +267,42 @@ weighted random routing across hundreds of agents.
 
 ### 7. Arcly Integration (`integration/`)
 
-Clean handoff contract:
+Production handoff to the Arcly AI Closer for conversion optimization.
 
 ```
-ResonanceAgent → ValueInjector → ArclyHandoff → Arcly AI Closer
-                                                      │
-                                              conversion outcome
-                                                      │
-                                    ResonanceScoreManager ←──┘
+ResonanceAgent → ValueInjector → OfferFramer → ArclyHandoff → Arcly AI Closer
+                     │                              │                │
+              handoff_package              agent_stats +         conversion
+              offer_bundle                 offer_bundle          outcome
+                                                    │                │
+                                                    └──── report_outcome()
+                                                              │
+                                                    ResonanceScoreManager
 ```
+
+**Handoff modes** (`ARCLY_MODE`):
+
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | Live when `ARCLY_API_KEY` + non-local `ARCLY_API_URL` |
+| `dry_run` | Simulated acceptance, logs reputation context |
+| `live` | POST with Bearer auth, retries, timeout |
+
+**`handoff_with_context()`** sends reputation snapshot alongside payload:
+`resonance_score`, `visibility_multiplier`, `success_rate`, `trend`, `offer_bundle`.
+
+**Offer framing** (`integration/offer_framer.py`): Commercial intents
+(`purchase_intent`, `evaluation_intent`) are tagged `offer_ready` with
+`offer_id`, `offer_url`, `cta_text`, and `value_prop` embedded in payload
+and handoff package.
+
+**Two-way feedback:** `ArclyHandoff.report_outcome()` and `POST /api/arcly_feedback`
+accept async conversion results from Arcly and update Resonance Score via
+`ResonanceScoreManager` when `ARCLY_FEEDBACK_ENABLED=true`.
+
+**Retry policy:** `ARCLY_HANDOFF_MAX_RETRIES` with exponential backoff
+(`ARCLY_HANDOFF_RETRY_DELAY`). Failures return `ResonanceOutcome.FAILURE`
+with structured logging and Axiom events.
 
 ### 8. Memory Subsystem (`core/memory.py`)
 

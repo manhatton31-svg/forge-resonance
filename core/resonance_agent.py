@@ -327,6 +327,9 @@ class ResonanceAgent:
         self._state = self._state_manager.load(self._memory.agent_id, name)
         self._running = False
 
+        if hasattr(self._handoff, "attach_score_manager"):
+            self._handoff.attach_score_manager(self._score_manager)  # type: ignore[union-attr]
+
         logger.info(
             "Agent '%s' initialized (id=%s, score=%.2f, wired=%s)",
             name,
@@ -483,7 +486,7 @@ class ResonanceAgent:
             if inject_outcome in (ResonanceOutcome.SUCCESS, ResonanceOutcome.PARTIAL):
                 self._state.transition(AgentLifecycle.HANDOFF)
                 self._state_manager.save(self._state)
-                final_outcome = self._handoff.handoff(payload, signal, self.agent_id)
+                final_outcome = self._execute_handoff(payload, signal)
                 logger.info(
                     "Cycle #%d: Arcly handoff outcome=%s",
                     self._state.loop_count,
@@ -596,6 +599,59 @@ class ResonanceAgent:
         self._memory_store.save(self._memory)
 
     # -- Internal ------------------------------------------------------------
+
+    def _execute_handoff(
+        self,
+        payload: ResonancePayload,
+        signal: IntentSignal,
+    ) -> ResonanceOutcome:
+        """Run Arcly handoff with reputation context when supported."""
+        handoff = self._handoff
+        if hasattr(handoff, "handoff_with_context"):
+            stats = self.get_reputation_stats()
+            agent_stats = {
+                "agent_name": self.name,
+                "resonance_score": stats.resonance_score,
+                "visibility_multiplier": stats.visibility_multiplier,
+                "success_rate": stats.success_rate,
+                "average_quality": stats.average_quality,
+                "trend": stats.trend.direction.value,
+                "total_resonances": stats.total_resonances,
+            }
+            result = handoff.handoff_with_context(  # type: ignore[union-attr]
+                payload,
+                signal,
+                self.agent_id,
+                agent_stats,
+            )
+            return result.outcome if hasattr(result, "outcome") else result
+        return handoff.handoff(payload, signal, self.agent_id)
+
+    def report_arcly_outcome(
+        self,
+        resonance_id: str,
+        outcome: str | ResonanceOutcome,
+        *,
+        quality: float | None = None,
+        conversion_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        """
+        Forward Arcly conversion feedback into the reputation layer.
+
+        Delegates to ``ArclyHandoff.report_outcome`` when available.
+        """
+        handoff = self._handoff
+        if hasattr(handoff, "report_outcome"):
+            return handoff.report_outcome(  # type: ignore[union-attr]
+                self.agent_id,
+                resonance_id,
+                outcome,
+                quality=quality,
+                conversion_id=conversion_id,
+                metadata=metadata,
+            )
+        return None
 
     def _clear_consumed_intent(self) -> None:
         """Remove one-shot intent sources after harvest."""
