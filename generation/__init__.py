@@ -1,0 +1,1 @@
+"""Resonance matching and generation engine — Grok-native."""

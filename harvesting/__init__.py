@@ -1,0 +1,1 @@
+"""Intent signal harvesting layer — privacy-preserving local processing."""
