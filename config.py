@@ -57,8 +57,9 @@ SCORE_DELTA_FAILURE = float(os.getenv("SCORE_DELTA_FAILURE", "-1.5"))
 SCORE_DELTA_REJECTION = float(os.getenv("SCORE_DELTA_REJECTION", "-3.0"))
 
 # Visibility multiplier derived from score (used by reputation layer)
-VISIBILITY_FLOOR = 0.1
-VISIBILITY_CEILING = 1.0
+VISIBILITY_FLOOR = float(os.getenv("VISIBILITY_FLOOR", "0.1"))
+VISIBILITY_CEILING = float(os.getenv("VISIBILITY_CEILING", "2.0"))
+VISIBILITY_MULTIPLIER_MAX = VISIBILITY_CEILING
 
 # ---------------------------------------------------------------------------
 # xAI / Grok

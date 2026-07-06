@@ -191,15 +191,55 @@ Channel selection uses signal confidence (inline when > 0.8) and source
 
 ### 5. Reputation / Resonance Score (`reputation/`, `core/scoring.py`)
 
-The Fabric's reputation primitive:
+The Fabric's reputation primitive powers the **distribution flywheel**: agents
+that demonstrate resonance success earn higher visibility in multi-agent matching.
+
+**`ResonanceScoreManager`** (`reputation/score_layer.py`) is the central API:
+
+```
+Reflect step (ResonanceAgent._finalize)
+        │
+        ▼
+record_outcome(agent_id, outcome, quality, metadata)
+        │
+        ├── ResonanceScorer.apply_outcome → score delta + ledger
+        └── OutcomeHistoryStore → analytics persistence
+```
+
+**Persistence chain:** Neon Postgres when `DATABASE_URL` is reachable → SQLite
+(`forge_resonance.db`) fallback → in-memory for tests.
+
+**Recorded metrics per cycle:** outcome tier, `quality_estimate`, signal
+`confidence`, `resonance_type`, `offer_id`, and offer metadata.
+
+**Visibility multiplier** (`get_visibility_multiplier(score)`):
+
+- Maps Resonance Score [0, 100] → multiplier [0.1, 2.0]
+- Default score 50 → visibility ~1.05
+- Used by `ReputationLayer.rank_agents()` to prioritize high-trust agents
+
+**Analytics** (`get_analytics` / `agent.get_reputation_stats()`):
+
+| Metric | Description |
+|--------|-------------|
+| `total_resonances` | Outcomes recorded in history window |
+| `success_rate` | Fraction of success + partial outcomes |
+| `average_quality` | Mean quality_estimate across window |
+| `trend` | improving / declining / stable (sliding window) |
+
+**Score parameters:**
 
 - Score range: 0–100 (default: 50)
 - Outcome-tier deltas: success (+2.5), partial (+0.5), failure (−1.5), rejection (−3.0)
 - Quality multiplier on positive deltas
-- Full audit trail in `reputation_ledger`
-- Visibility multiplier for matching prioritization
+- Full audit trail in `reputation_ledger` + `reputation_outcomes`
 
-**Future:** Cloudflare KV edge cache for sub-millisecond reputation lookups.
+**Decentralized distribution (roadmap):**
+
+1. Agents earn score through demonstrated resonance (current)
+2. `ReputationLayer.rank_agents()` weights selection by visibility (current)
+3. Cloudflare KV replicates score snapshots to edge (planned)
+4. Fabric-wide consensus on reputation without central orchestration (planned)
 
 ### 6. Arcly Integration (`integration/`)
 
@@ -210,7 +250,7 @@ ResonanceAgent → ValueInjector → ArclyHandoff → Arcly AI Closer
                                                       │
                                               conversion outcome
                                                       │
-                                              ResonanceScorer ←──┘
+                                    ResonanceScoreManager ←──┘
 ```
 
 ### 7. Memory Subsystem (`core/memory.py`)

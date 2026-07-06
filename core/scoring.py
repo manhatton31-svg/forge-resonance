@@ -26,9 +26,9 @@ from config import (
     SCORE_DELTA_PARTIAL,
     SCORE_DELTA_REJECTION,
     SCORE_DELTA_SUCCESS,
-    VISIBILITY_CEILING,
-    VISIBILITY_FLOOR,
+    SQLITE_PATH,
 )
+from reputation.multiplier import get_visibility_multiplier
 from utils.logging import emit_axiom_event, setup_logging
 
 logger = setup_logging("forge.scoring")
@@ -67,10 +67,7 @@ class ScoreUpdate:
     @property
     def visibility_multiplier(self) -> float:
         """Map score to a visibility multiplier for the reputation layer."""
-        normalized = (self.new_score - RESONANCE_SCORE_MIN) / (
-            RESONANCE_SCORE_MAX - RESONANCE_SCORE_MIN
-        )
-        return VISIBILITY_FLOOR + normalized * (VISIBILITY_CEILING - VISIBILITY_FLOOR)
+        return get_visibility_multiplier(self.new_score)
 
 
 class ScoreStore(ABC):
@@ -131,6 +128,149 @@ class InMemoryScoreStore(ScoreStore):
             agent_id,
             outcome,
         )
+
+
+class SqliteScoreStore(ScoreStore):
+    """
+    SQLite score store — local fallback when Neon is unavailable.
+
+    Uses agent_reputation, reputation_ledger, and reputation_outcomes tables
+    in the shared forge_resonance.db file.
+    """
+
+    def __init__(self, db_path: str | None = None) -> None:
+        import sqlite3
+        from pathlib import Path
+
+        self._db_path = Path(db_path or SQLITE_PATH)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._sqlite3 = sqlite3
+        self._init_schema()
+
+    def _connect(self):
+        conn = self._sqlite3.connect(str(self._db_path))
+        conn.row_factory = self._sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS agent_reputation (
+                    agent_id TEXT PRIMARY KEY,
+                    resonance_score REAL NOT NULL DEFAULT 50.0,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reputation_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    delta REAL NOT NULL,
+                    reason TEXT,
+                    previous_score REAL NOT NULL,
+                    new_score REAL NOT NULL,
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reputation_outcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    resonance_id TEXT,
+                    intent_signal_hash TEXT,
+                    outcome TEXT NOT NULL,
+                    quality REAL,
+                    confidence REAL,
+                    resonance_type TEXT,
+                    score_delta REAL,
+                    new_score REAL,
+                    metadata TEXT DEFAULT '{}',
+                    recorded_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS resonance_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    intent_signal_hash TEXT,
+                    resonance_quality REAL,
+                    outcome TEXT NOT NULL,
+                    score_delta REAL,
+                    metadata TEXT DEFAULT '{}',
+                    recorded_at TEXT NOT NULL
+                );
+                """
+            )
+
+    def get_score(self, agent_id: str) -> float:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT resonance_score FROM agent_reputation WHERE agent_id = ?",
+                (agent_id,),
+            ).fetchone()
+            if row is None:
+                return RESONANCE_SCORE_DEFAULT
+            return float(row["resonance_score"])
+
+    def set_score(self, agent_id: str, score: float) -> None:
+        clamped = max(RESONANCE_SCORE_MIN, min(RESONANCE_SCORE_MAX, score))
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_reputation (agent_id, resonance_score, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    resonance_score = excluded.resonance_score,
+                    updated_at = excluded.updated_at
+                """,
+                (agent_id, clamped, now),
+            )
+            conn.commit()
+
+    def append_ledger(self, update: ScoreUpdate) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO reputation_ledger
+                    (agent_id, delta, reason, previous_score, new_score, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    update.agent_id,
+                    update.delta,
+                    update.reason,
+                    update.previous_score,
+                    update.new_score,
+                    update.timestamp.isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def record_resonance_event(
+        self,
+        agent_id: str,
+        intent_signal_hash: str,
+        quality: float,
+        outcome: str,
+        score_delta: float,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO resonance_events
+                    (agent_id, intent_signal_hash, resonance_quality, outcome,
+                     score_delta, metadata, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_id,
+                    intent_signal_hash,
+                    quality,
+                    outcome,
+                    score_delta,
+                    json.dumps(metadata or {}),
+                    now,
+                ),
+            )
+            conn.commit()
 
 
 class NeonScoreStore(ScoreStore):
@@ -335,15 +475,11 @@ class ResonanceScorer:
 
     def visibility_for(self, agent_id: str) -> float:
         """Return the visibility multiplier for an agent's current score."""
-        score = self._store.get_score(agent_id)
-        normalized = (score - RESONANCE_SCORE_MIN) / (
-            RESONANCE_SCORE_MAX - RESONANCE_SCORE_MIN
-        )
-        return VISIBILITY_FLOOR + normalized * (VISIBILITY_CEILING - VISIBILITY_FLOOR)
+        return get_visibility_multiplier(self._store.get_score(agent_id))
 
 
 def create_scorer(use_neon: bool = True) -> ResonanceScorer:
-    """Factory for ResonanceScorer with Neon when reachable, else in-memory."""
+    """Factory for ResonanceScorer: Neon → SQLite → in-memory."""
     if use_neon and DATABASE_URL:
         try:
             from core.memory import neon_is_reachable
@@ -352,5 +488,9 @@ def create_scorer(use_neon: bool = True) -> ResonanceScorer:
                 return ResonanceScorer(NeonScoreStore())
         except (ValueError, ImportError) as exc:
             logger.warning("Neon score store unavailable: %s", exc)
+    try:
+        return ResonanceScorer(SqliteScoreStore())
+    except Exception as exc:
+        logger.warning("SQLite score store unavailable: %s", exc)
     logger.debug("Using InMemoryScoreStore for scoring")
     return ResonanceScorer(InMemoryScoreStore())

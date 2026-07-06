@@ -209,7 +209,7 @@ class TestResonanceScoring:
         store.set_score("agent-4", 75.0)
         scorer = ResonanceScorer(store)
         visibility = scorer.visibility_for("agent-4")
-        assert 0.0 < visibility <= 1.0
+        assert 0.1 <= visibility <= 2.0
 
 
 class TestIntentSignal:

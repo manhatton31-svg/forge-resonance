@@ -19,6 +19,7 @@ from typing import Any, Callable, TYPE_CHECKING
 from config import AGENT_LOOP_INTERVAL_SECONDS, load_config
 from core.memory import AgentMemory, EpisodicRecord, MemoryStore, create_memory_store
 from core.scoring import OutcomeTier, ResonanceScorer, ScoreUpdate, create_scorer
+from reputation.score_layer import AgentAnalytics, ResonanceScoreManager, create_score_manager
 from core.state import AgentLifecycle, AgentState, StateManager
 from utils.logging import emit_axiom_event, setup_logging
 
@@ -264,6 +265,7 @@ class ResonanceAgent:
         *,
         memory_store: MemoryStore | None = None,
         scorer: ResonanceScorer | None = None,
+        score_manager: ResonanceScoreManager | None = None,
         state_manager: StateManager | None = None,
         intent_harvester: IntentHarvesterProtocol | None = None,
         resonance_engine: ResonanceEngineProtocol | None = None,
@@ -282,7 +284,12 @@ class ResonanceAgent:
 
         self.name = name
         self._memory_store = memory_store or create_memory_store()
-        self._scorer = scorer or create_scorer()
+        if score_manager is not None:
+            self._score_manager = score_manager
+            self._scorer = score_manager.scorer
+        else:
+            self._scorer = scorer or create_scorer()
+            self._score_manager = create_score_manager(scorer=self._scorer)
         self._state_manager = state_manager or StateManager()
         self._on_score_update = on_score_update
 
@@ -364,7 +371,15 @@ class ResonanceAgent:
 
     @property
     def visibility(self) -> float:
-        return self._scorer.visibility_for(self.agent_id)
+        return self._score_manager.get_visibility_multiplier(self.agent_id)
+
+    @property
+    def score_manager(self) -> ResonanceScoreManager:
+        return self._score_manager
+
+    def get_reputation_stats(self) -> AgentAnalytics:
+        """Return reputation analytics: score, success rate, trend, etc."""
+        return self._score_manager.get_analytics(self.agent_id)
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -607,24 +622,41 @@ class ResonanceAgent:
         tier = OUTCOME_TO_TIER.get(outcome)
 
         if tier is not None:
-            update = self._scorer.apply_outcome(
+            outcome_metadata: dict[str, Any] = {
+                "agent_name": self.name,
+                "confidence": signal.confidence,
+                "outcome": outcome.value,
+            }
+            if payload:
+                outcome_metadata.update({
+                    "quality_estimate": payload.quality_estimate,
+                    "resonance_type": payload.resonance_type,
+                    "offer_id": payload.offer_id,
+                })
+                if payload.metadata:
+                    outcome_metadata["offer_metadata"] = dict(payload.metadata)
+
+            update = self._score_manager.record_outcome(
                 self.agent_id,
                 tier,
                 quality=quality,
-                reason=f"resonance_cycle:{outcome.value}",
+                metadata=outcome_metadata,
                 resonance_id=resonance_id,
                 intent_signal_hash=signal.signal_hash,
-                metadata={"agent_name": self.name, "confidence": signal.confidence},
+                confidence=signal.confidence,
+                resonance_type=payload.resonance_type if payload else "",
             )
-            self._state.resonance_score = update.new_score
-            if self._on_score_update:
-                self._on_score_update(update)
-            logger.info(
-                "Score updated: %s → %s (Δ%s)",
-                update.previous_score,
-                update.new_score,
-                update.delta,
-            )
+            if update is not None:
+                self._state.resonance_score = update.new_score
+                if self._on_score_update:
+                    self._on_score_update(update)
+                logger.info(
+                    "Score updated: %s → %s (Δ%s) visibility=%.2f",
+                    update.previous_score,
+                    update.new_score,
+                    update.delta,
+                    self.visibility,
+                )
 
         self._memory_store.record_episode(
             self._memory,
