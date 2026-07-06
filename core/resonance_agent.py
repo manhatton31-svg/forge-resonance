@@ -76,12 +76,66 @@ class IntentSignal:
 
 @dataclass
 class ResonancePayload:
-    """Generated value ready for contextual injection."""
+    """
+    Generated value ready for contextual injection.
+
+    Structured fields (summary, recommended_action, etc.) are the canonical
+    representation; ``content`` mirrors them for downstream injectors and
+    Arcly handoff. Use ``from_structured()`` when building new payloads.
+    """
 
     resonance_id: str
     content: dict[str, Any]
     quality_estimate: float = 0.0
     offer_id: str | None = None
+    summary: str = ""
+    recommended_action: str = ""
+    value_proposition: str = ""
+    confidence: float = 0.0
+    resonance_type: str = "educational"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_structured(
+        cls,
+        *,
+        resonance_id: str = "",
+        summary: str,
+        recommended_action: str,
+        value_proposition: str,
+        confidence: float,
+        resonance_type: str,
+        quality_estimate: float,
+        metadata: dict[str, Any] | None = None,
+        offer_id: str | None = None,
+        extra_content: dict[str, Any] | None = None,
+    ) -> ResonancePayload:
+        """Build a payload with structured fields synced into ``content``."""
+        meta = dict(metadata or {})
+        content: dict[str, Any] = {
+            "type": "contextual_value",
+            "message": value_proposition or summary,
+            "summary": summary,
+            "recommended_action": recommended_action,
+            "value_proposition": value_proposition,
+            "confidence": confidence,
+            "resonance_type": resonance_type,
+            "metadata": meta,
+        }
+        if extra_content:
+            content.update(extra_content)
+        return cls(
+            resonance_id=resonance_id,
+            content=content,
+            quality_estimate=quality_estimate,
+            offer_id=offer_id,
+            summary=summary,
+            recommended_action=recommended_action,
+            value_proposition=value_proposition,
+            confidence=confidence,
+            resonance_type=resonance_type,
+            metadata=meta,
+        )
 
 
 # ---------------------------------------------------------------------------

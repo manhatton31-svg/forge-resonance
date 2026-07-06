@@ -78,12 +78,68 @@ ingest_from_webhook()──►  multi-turn context boost             run_once()
 
 ### 3. Resonance Matching & Generation (`generation/`)
 
-Grok-native engine that:
+The `ResonanceEngine` transforms a harvested `IntentSignal` into a structured
+`ResonancePayload` — the unit of contextual value injected into the user's flow.
 
-- Matches intent to agent offers
-- Weights matching by Resonance Score (visibility)
-- Generates contextual value payloads via xAI API
-- Estimates quality for score adjustment
+**How resonant value is generated:**
+
+```
+IntentSignal + AgentMemory + Resonance Score
+        │
+        ▼
+  Build GenerationContext
+  (topic, matched_intent, resonance_type, episodic insights)
+        │
+        ├── XAI_API_KEY set? ──► Grok (system prompt + user context)
+        │                              │
+        │                         parse JSON ──► ResonancePayload
+        │
+        └── no key / API failure ──► context-aware template fallback
+```
+
+**Inputs woven into every payload:**
+
+| Input | Role |
+|-------|------|
+| Agent goals | Ground recommendations in sovereign objectives |
+| Episodic memory | Success rate, avg quality, recent topics inform tone |
+| Resonance Score | Visibility weight; higher scores → more assertive framing |
+| Intent confidence | Gates generation; boosts quality estimate and CTA strength |
+| `matched_intent` | Maps to resonance type (educational, comparative, etc.) |
+
+**Resonance types:**
+
+- `educational` — research intents; orient and summarize
+- `comparative` — comparison intents; criteria-based trade-offs
+- `solution_oriented` — problem/support intents; diagnostic next steps
+- `offer_framed` — purchase/evaluation intents; soft or direct offer linkage
+
+**Payload structure (`ResonancePayload`):**
+
+```json
+{
+  "summary": "1-2 sentence need capture",
+  "recommended_action": "single imperative next step",
+  "value_proposition": "delivered resonant message",
+  "confidence": 0.0,
+  "resonance_type": "educational",
+  "quality_estimate": 0.0,
+  "metadata": { "offer_url": "...", "cta_label": "..." },
+  "content": { "...mirrors structured fields for injectors..." }
+}
+```
+
+**Grok prompt engineering:** A system prompt carries agent identity, goals,
+episodic summary, intent label/confidence, and resonance-type guidance. The
+user turn adds signal hash and extra context vector fields. Temperature and
+max tokens are configurable via `GROK_TEMPERATURE` and `GROK_MAX_TOKENS`.
+
+**Template fallback:** When Grok is unavailable, type-specific builders still
+reference goals, episodic momentum, and score — producing usable payloads without
+an API key.
+
+**Quality estimation:** Blends intent confidence (35%), Resonance Score (25%),
+episodic momentum (25%), and intent-type fit (15%) to feed the scoring engine.
 
 ### 4. Contextual Value Injection (`injection/`)
 

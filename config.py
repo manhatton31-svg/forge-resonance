@@ -67,6 +67,8 @@ VISIBILITY_CEILING = 1.0
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
 XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
+GROK_TEMPERATURE = float(os.getenv("GROK_TEMPERATURE", "0.55"))
+GROK_MAX_TOKENS = int(os.getenv("GROK_MAX_TOKENS", "1024"))
 
 # ---------------------------------------------------------------------------
 # Arcly integration
@@ -119,6 +121,8 @@ class ForgeConfig:
     neon_project_id: str = NEON_PROJECT_ID
     data_dir: Path = field(default_factory=lambda: DATA_DIR)
     grok_model: str = GROK_MODEL
+    grok_temperature: float = GROK_TEMPERATURE
+    grok_max_tokens: int = GROK_MAX_TOKENS
     xai_api_key: str = XAI_API_KEY
     arcly_api_url: str = ARCLY_API_URL
     arcly_api_key: str = ARCLY_API_KEY

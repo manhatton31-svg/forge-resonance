@@ -141,7 +141,9 @@ class TestFullResonanceCycle:
     def test_e2e_with_text_intent(self, wired_agent: ResonanceAgent):
         """End-to-end cycle: text intent → generate → inject → handoff → score."""
         initial_score = wired_agent.resonance_score
-        wired_agent.submit_intent("I want to buy a new analytics tool")
+        wired_agent.submit_intent(
+            "I want to buy a new analytics tool and need pricing for the enterprise plan"
+        )
 
         outcome = wired_agent.run_once()
 
@@ -170,9 +172,13 @@ class TestFullResonanceCycle:
         assert len(wired_agent.memory.episodic) == 1
 
     def test_second_cycle_increments_episodic(self, wired_agent: ResonanceAgent):
-        wired_agent.submit_intent("purchase intent for software")
+        wired_agent.submit_intent(
+            "I want to buy analytics software and need pricing for the enterprise plan"
+        )
         wired_agent.run_once()
-        wired_agent.submit_intent("support intent for billing issue")
+        wired_agent.submit_intent(
+            "I need support with my billing account and a refund request"
+        )
         wired_agent.run_once()
         assert len(wired_agent.memory.episodic) == 2
 
