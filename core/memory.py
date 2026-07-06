@@ -576,12 +576,14 @@ class HybridMemoryStore(MemoryStore):
     def __init__(self) -> None:
         self._local = FileMemoryStore()
         self._remote: NeonMemoryStore | None = None
-        if DATABASE_URL:
+        if neon_is_reachable():
             try:
                 self._remote = NeonMemoryStore()
                 logger.info("Hybrid memory: Neon sync enabled")
             except (ValueError, ImportError) as exc:
                 logger.warning("Neon sync unavailable: %s", exc)
+        elif DATABASE_URL:
+            logger.info("Hybrid memory: Neon configured but unreachable; local only")
 
     def load(self, agent_name: str) -> AgentMemory:
         memory = self._local.load(agent_name)
@@ -626,6 +628,22 @@ class HybridMemoryStore(MemoryStore):
                 logger.warning("Neon episodic sync failed: %s", exc)
 
 
+def neon_is_reachable(database_url: str | None = None) -> bool:
+    """Test whether Neon Postgres is reachable; used for graceful fallback."""
+    url = database_url or DATABASE_URL
+    if not url:
+        return False
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(url, connect_timeout=5)
+        conn.close()
+        return True
+    except Exception as exc:
+        logger.warning("Neon unreachable, using local fallback: %s", exc)
+        return False
+
+
 def create_memory_store(backend: str | None = None) -> MemoryStore:
     """Factory for memory backends based on config or explicit override."""
     cfg = load_config()
@@ -636,5 +654,13 @@ def create_memory_store(backend: str | None = None) -> MemoryStore:
     if backend == "sqlite":
         return SQLiteMemoryStore()
     if backend == "neon":
-        return NeonMemoryStore()
+        if neon_is_reachable():
+            try:
+                return NeonMemoryStore()
+            except (ValueError, ImportError) as exc:
+                logger.warning("Neon store unavailable: %s", exc)
+        logger.info("Falling back to SQLiteMemoryStore")
+        return SQLiteMemoryStore()
+    if backend == "hybrid":
+        return HybridMemoryStore()
     return HybridMemoryStore()

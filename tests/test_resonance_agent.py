@@ -6,12 +6,10 @@ Run with: python -m pytest tests/ -v
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from config import AGENT_DATA_DIR
 from core.memory import FileMemoryStore
 from core.resonance_agent import (
     IntentSignal,
@@ -21,13 +19,16 @@ from core.resonance_agent import (
 )
 from core.scoring import InMemoryScoreStore, OutcomeTier, ResonanceScorer
 from core.state import AgentLifecycle, StateManager
+from harvesting.intent_harvester import EmbeddingIntentHarvester
+from generation.resonance_engine import ResonanceEngine
+from injection.value_injector import ValueInjector
+from integration.arcly_handoff import ArclyHandoff
 
 
 @pytest.fixture
 def temp_data_dir(tmp_path: Path, monkeypatch):
     """Isolate agent data to a temporary directory."""
     agent_dir = tmp_path / "agents"
-    state_dir = agent_dir / "state"
     agent_dir.mkdir()
     monkeypatch.setattr("config.AGENT_DATA_DIR", agent_dir)
     monkeypatch.setattr("core.memory.AGENT_DATA_DIR", agent_dir)
@@ -37,7 +38,7 @@ def temp_data_dir(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def agent(temp_data_dir) -> ResonanceAgent:
-    """Create a test agent with in-memory scoring."""
+    """Create a test agent with in-memory scoring and no-op stubs."""
     scorer = ResonanceScorer(InMemoryScoreStore())
     return ResonanceAgent(
         name="test-agent",
@@ -45,6 +46,24 @@ def agent(temp_data_dir) -> ResonanceAgent:
         memory_store=FileMemoryStore(base_dir=temp_data_dir),
         scorer=scorer,
         state_manager=StateManager(base_dir=temp_data_dir / "state"),
+        wire_components=False,
+    )
+
+
+@pytest.fixture
+def wired_agent(temp_data_dir) -> ResonanceAgent:
+    """Fully wired agent with real module instances."""
+    scorer = ResonanceScorer(InMemoryScoreStore())
+    return ResonanceAgent(
+        name="wired-agent",
+        goals=["help users find solutions"],
+        memory_store=FileMemoryStore(base_dir=temp_data_dir),
+        scorer=scorer,
+        state_manager=StateManager(base_dir=temp_data_dir / "state"),
+        intent_harvester=EmbeddingIntentHarvester(),
+        resonance_engine=ResonanceEngine(),
+        value_injector=ValueInjector(echo=False),
+        arcly_handoff=ArclyHandoff(force_dry_run=True),
     )
 
 
@@ -54,6 +73,12 @@ class TestResonanceAgentBasics:
         assert agent.agent_id
         assert agent.resonance_score == 50.0
         assert "deliver contextual value" in agent.memory.goals
+
+    def test_wired_agent_has_real_components(self, wired_agent: ResonanceAgent):
+        assert isinstance(wired_agent.intent_harvester, EmbeddingIntentHarvester)
+        assert isinstance(wired_agent.resonance_engine, ResonanceEngine)
+        assert isinstance(wired_agent.value_injector, ValueInjector)
+        assert isinstance(wired_agent.arcly_handoff, ArclyHandoff)
 
     def test_agent_repr(self, agent: ResonanceAgent):
         assert "test-agent" in repr(agent)
@@ -87,16 +112,11 @@ class TestResonanceAgentLifecycle:
 
     def test_run_once_with_signal(self, agent: ResonanceAgent):
         from core.memory import AgentMemory
-        from core.resonance_agent import IntentHarvesterProtocol
+        from core.resonance_agent import IntentHarvesterProtocol, ResonanceEngineProtocol
 
         class MockHarvester(IntentHarvesterProtocol):
             def harvest(self, agent_memory: AgentMemory) -> IntentSignal | None:
-                agent_memory.metadata["intent_opt_in"] = True
-                return IntentSignal.from_context(
-                    {"topic": "test"}, confidence=0.8
-                )
-
-        from core.resonance_agent import ResonanceEngineProtocol
+                return IntentSignal.from_context({"topic": "test"}, confidence=0.8)
 
         class MockEngine(ResonanceEngineProtocol):
             def generate(self, signal, agent_memory, resonance_score):
@@ -108,14 +128,51 @@ class TestResonanceAgentLifecycle:
 
         agent._harvester = MockHarvester()
         agent._engine = MockEngine()
+        agent._injector = ValueInjector(echo=False)
+        agent._handoff = ArclyHandoff(force_dry_run=True)
 
         outcome = agent.run_once()
-        assert outcome in (
-            ResonanceOutcome.SUCCESS,
-            ResonanceOutcome.PARTIAL,
-            ResonanceOutcome.SKIPPED,
+        assert outcome == ResonanceOutcome.SUCCESS
+        assert len(agent.memory.episodic) == 1
+        assert agent.resonance_score > 50.0
+
+
+class TestFullResonanceCycle:
+    def test_e2e_with_text_intent(self, wired_agent: ResonanceAgent):
+        """End-to-end cycle: text intent → generate → inject → handoff → score."""
+        initial_score = wired_agent.resonance_score
+        wired_agent.submit_intent("I want to buy a new analytics tool")
+
+        outcome = wired_agent.run_once()
+
+        assert outcome in (ResonanceOutcome.SUCCESS, ResonanceOutcome.PARTIAL)
+        assert len(wired_agent.memory.episodic) == 1
+        assert wired_agent.resonance_score >= initial_score
+        episode = wired_agent.memory.episodic[0]
+        assert episode.outcome in ("success", "partial")
+        assert episode.context.get("signal_hash")
+
+    def test_e2e_with_mock_signal(self, wired_agent: ResonanceAgent):
+        wired_agent.submit_mock_signal(
+            {"topic": "pricing", "intent": "compare plans"},
+            confidence=0.85,
         )
-        assert len(agent.memory.episodic) >= 0
+        outcome = wired_agent.run_once()
+        assert outcome == ResonanceOutcome.SUCCESS
+        assert wired_agent.memory.episodic[-1].outcome == "success"
+
+    def test_run_loop_single_iteration(self, wired_agent: ResonanceAgent):
+        wired_agent.submit_intent("research intent for project management")
+        wired_agent.run_loop(max_iterations=1)
+        assert wired_agent.state.lifecycle == AgentLifecycle.PAUSED
+        assert len(wired_agent.memory.episodic) == 1
+
+    def test_second_cycle_increments_episodic(self, wired_agent: ResonanceAgent):
+        wired_agent.submit_intent("purchase intent for software")
+        wired_agent.run_once()
+        wired_agent.submit_intent("support intent for billing issue")
+        wired_agent.run_once()
+        assert len(wired_agent.memory.episodic) == 2
 
 
 class TestResonanceScoring:
@@ -156,3 +213,18 @@ class TestIntentSignal:
     def test_signal_hash_length(self):
         signal = IntentSignal.from_context({"test": True})
         assert len(signal.signal_hash) == 16
+
+
+class TestEmbeddingHarvester:
+    def test_queue_and_harvest_text(self, temp_data_dir):
+        from core.memory import AgentMemory
+
+        harvester = EmbeddingIntentHarvester()
+        memory = AgentMemory(agent_id="a1", agent_name="harvest-test")
+        EmbeddingIntentHarvester.queue_intent_text(
+            memory, "I need help with purchase decisions"
+        )
+        signal = harvester.harvest(memory)
+        assert signal is not None
+        assert signal.confidence > 0.0
+        assert "topic" in signal.context_vector

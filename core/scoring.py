@@ -343,10 +343,14 @@ class ResonanceScorer:
 
 
 def create_scorer(use_neon: bool = True) -> ResonanceScorer:
-    """Factory for ResonanceScorer with appropriate backend."""
+    """Factory for ResonanceScorer with Neon when reachable, else in-memory."""
     if use_neon and DATABASE_URL:
         try:
-            return ResonanceScorer(NeonScoreStore())
-        except (ValueError, ImportError):
-            pass
+            from core.memory import neon_is_reachable
+
+            if neon_is_reachable():
+                return ResonanceScorer(NeonScoreStore())
+        except (ValueError, ImportError) as exc:
+            logger.warning("Neon score store unavailable: %s", exc)
+    logger.debug("Using InMemoryScoreStore for scoring")
     return ResonanceScorer(InMemoryScoreStore())
