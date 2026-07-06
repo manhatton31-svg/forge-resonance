@@ -54,6 +54,8 @@ MULTI_AGENT_SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+PIPELINE_PHASES = ("Harvest", "Generate", "Inject", "Handoff", "Reflect")
+
 
 @dataclass
 class CycleResult:
@@ -93,6 +95,43 @@ def banner(title: str, *, print_fn: PrintFn = _default_print) -> None:
 
 def section(title: str, *, print_fn: PrintFn = _default_print) -> None:
     print_fn(f"\n── {title} ──")
+
+
+def _truncate_intent(text: str, limit: int = 72) -> str:
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _summarize_message(formatted: str, max_lines: int = 2) -> str:
+    """First meaningful lines of resonant value for compact display."""
+    lines = [ln.strip() for ln in formatted.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    return "\n".join(f"    {ln}" for ln in lines[:max_lines])
+
+
+def _print_cycle_compact(
+    cycle: CycleResult,
+    *,
+    print_fn: PrintFn,
+) -> None:
+    """One-line cycle summary for default demo output."""
+    intent = _truncate_intent(cycle.intent_text, 56)
+    if cycle.skipped:
+        print_fn(f"  Cycle {cycle.cycle_number}: skipped — intent below threshold")
+        print_fn(f"    Intent: {intent}")
+        return
+
+    phases = " → ".join(PIPELINE_PHASES)
+    print_fn(
+        f"  Cycle {cycle.cycle_number}: {cycle.outcome} "
+        f"(score {cycle.score:.1f})  [{phases}]"
+    )
+    print_fn(f"    Intent: {intent}")
+    if cycle.formatted_message:
+        summary = _summarize_message(cycle.formatted_message)
+        if summary:
+            print_fn("    Value:")
+            print_fn(summary)
 
 
 def create_demo_stack(
@@ -163,7 +202,7 @@ def run_agent_cycles(
     for i, text in enumerate(intents, start=1):
         if verbose:
             section(f"Cycle {i}: {agent.name}", print_fn=print_fn)
-            print_fn(f"  Intent: {text[:72]}{'...' if len(text) > 72 else ''}")
+            print_fn(f"  Intent: {_truncate_intent(text)}")
 
         agent.submit_intent(text)
         outcome = agent.run_once()
@@ -194,6 +233,8 @@ def run_agent_cycles(
                 print_fn(
                     f"  Outcome: {outcome.value}  |  Score: {agent.resonance_score:.2f}"
                 )
+                for phase in PIPELINE_PHASES:
+                    print_fn(f"    [{phase}] complete")
                 if formatted:
                     print_fn("\n  Resonant value:")
                     for line in formatted.splitlines():
@@ -210,6 +251,45 @@ def run_agent_cycles(
     return result
 
 
+def run_agent_cycles_compact(
+    agent: ResonanceAgent,
+    intents: list[str],
+    *,
+    print_fn: PrintFn = _default_print,
+) -> DemoResult:
+    """Run cycles with compact one-line summaries (default demo mode)."""
+    result = DemoResult(agent_name=agent.name)
+    agent.start()
+
+    for i, text in enumerate(intents, start=1):
+        agent.submit_intent(text)
+        outcome = agent.run_once()
+        skipped = outcome == ResonanceOutcome.SKIPPED
+
+        formatted = ""
+        card: dict[str, Any] = {}
+        injector = agent.value_injector
+        if hasattr(injector, "last_result") and injector.last_result:
+            formatted = injector.last_result.formatted_message
+            card = dict(injector.last_result.structured_card)
+
+        cycle = CycleResult(
+            cycle_number=i,
+            intent_text=text,
+            outcome=outcome.value,
+            score=agent.resonance_score,
+            formatted_message=formatted,
+            structured_card=card,
+            skipped=skipped,
+        )
+        result.cycles.append(cycle)
+        _print_cycle_compact(cycle, print_fn=print_fn)
+
+    result.analytics = agent.get_reputation_stats()
+    print_reputation_stats(agent.name, result.analytics, print_fn=print_fn)
+    return result
+
+
 def print_reputation_stats(
     agent_name: str,
     analytics: AgentAnalytics,
@@ -218,12 +298,12 @@ def print_reputation_stats(
 ) -> None:
     """Pretty-print reputation analytics."""
     section(f"Reputation — {agent_name}", print_fn=print_fn)
-    print_fn(f"  Resonance Score:      {analytics.resonance_score:.2f}")
-    print_fn(f"  Visibility multiplier:{analytics.visibility_multiplier:.2f}")
-    print_fn(f"  Total resonances:     {analytics.total_resonances}")
-    print_fn(f"  Success rate:         {analytics.success_rate:.0%}")
-    print_fn(f"  Average quality:      {analytics.average_quality:.2f}")
-    print_fn(f"  Trend:                {analytics.trend.direction.value}")
+    print_fn(f"  Resonance Score:       {analytics.resonance_score:.2f}")
+    print_fn(f"  Visibility multiplier: {analytics.visibility_multiplier:.2f}")
+    print_fn(f"  Total resonances:      {analytics.total_resonances}")
+    print_fn(f"  Success rate:          {analytics.success_rate:.0%}")
+    print_fn(f"  Average quality:       {analytics.average_quality:.2f}")
+    print_fn(f"  Trend:                 {analytics.trend.direction.value}")
 
 
 def print_ranking(
@@ -247,7 +327,7 @@ def print_ranking(
         )
     print_fn(
         "\n  Selection weight = visibility × (score / 100). "
-        "In a swarm, higher-weight agents are preferred for intent routing."
+        "Higher weight → preferred for intent routing in agent swarms."
     )
 
 
@@ -256,15 +336,17 @@ def run_single_agent_demo(
     data_dir: Path | None = None,
     intents: list[str] | None = None,
     print_fn: PrintFn = _default_print,
-    verbose: bool = True,
+    verbose: bool = False,
+    show_banners: bool = True,
 ) -> DemoResult:
     """Run the single-agent showcase demo."""
     base = data_dir or Path("data/demo")
     manager, _ = create_demo_stack(data_dir=base)
 
-    if verbose:
+    if show_banners:
         banner("ForgeResonance — Single Agent Demo", print_fn=print_fn)
-        print_fn("  Pipeline: Harvest → Generate → Inject → Handoff → Reflect\n")
+        print_fn("  Pipeline: Harvest → Generate → Inject → Handoff → Reflect")
+        print_fn("  Mode: template generation (no API keys)\n")
 
     agent = create_demo_agent(
         "atlas-demo",
@@ -276,19 +358,23 @@ def run_single_agent_demo(
         score_manager=manager,
     )
 
-    return run_agent_cycles(
-        agent,
-        list(intents or SINGLE_AGENT_INTENTS),
-        print_fn=print_fn,
-        verbose=verbose,
-    )
+    intent_list = list(intents or SINGLE_AGENT_INTENTS)
+    if verbose:
+        return run_agent_cycles(
+            agent,
+            intent_list,
+            print_fn=print_fn,
+            verbose=True,
+        )
+    return run_agent_cycles_compact(agent, intent_list, print_fn=print_fn)
 
 
 def run_multi_agent_ranking_demo(
     *,
     data_dir: Path | None = None,
     print_fn: PrintFn = _default_print,
-    verbose: bool = True,
+    verbose: bool = False,
+    show_banners: bool = True,
 ) -> list[AgentReputation]:
     """
     Run 2–3 agents on similar intents and rank by reputation.
@@ -299,7 +385,7 @@ def run_multi_agent_ranking_demo(
     base = data_dir or Path("data/demo")
     manager, reputation = create_demo_stack(data_dir=base)
 
-    if verbose:
+    if show_banners:
         banner("ForgeResonance — Multi-Agent Ranking Demo", print_fn=print_fn)
         print_fn(
             "  Three sovereign agents compete on overlapping intents.\n"
@@ -331,33 +417,28 @@ def run_multi_agent_ranking_demo(
         )
 
     for agent, (_, _, intent_list) in zip(agents, specs):
+        section(f"Agent: {agent.name}", print_fn=print_fn)
         if verbose:
-            section(f"Running agent: {agent.name}", print_fn=print_fn)
-        run_agent_cycles(
-            agent,
-            list(intent_list),
-            print_fn=print_fn,
-            verbose=False,
-        )
-        if verbose:
-            stats = agent.get_reputation_stats()
-            print_fn(
-                f"  Completed {stats.total_resonances} cycle(s) — "
-                f"score {stats.resonance_score:.1f}, "
-                f"visibility {stats.visibility_multiplier:.2f}"
+            run_agent_cycles(
+                agent,
+                list(intent_list),
+                print_fn=print_fn,
+                verbose=True,
             )
+        else:
+            run_agent_cycles_compact(agent, list(intent_list), print_fn=print_fn)
 
     agent_ids = [a.agent_id for a in agents]
     names = {a.agent_id: a.name for a in agents}
     ranked = reputation.rank_agents(agent_ids, agent_names=names)
 
-    if verbose:
-        print_ranking(ranked, print_fn=print_fn)
+    print_ranking(ranked, print_fn=print_fn)
+    if show_banners:
         section("Swarm scaling note", print_fn=print_fn)
         print_fn(
-            "  Today: rank_agents() orders a small set by selection weight.\n"
-            "  Next:  Fabric router samples agents proportional to weight across\n"
-            "         hundreds of edge-deployed agents (Cloudflare KV reputation)."
+            "  Today: rank_agents() orders agents by selection weight.\n"
+            "  Next:  Fabric router samples proportionally across edge agents\n"
+            "         (Cloudflare KV reputation cache + Neon source of truth)."
         )
 
     return ranked
@@ -368,14 +449,25 @@ def run_full_demo(
     data_dir: Path | None = None,
     print_fn: PrintFn = _default_print,
     skip_multi: bool = False,
+    verbose: bool = False,
+    show_banners: bool = True,
 ) -> dict[str, Any]:
     """Run single-agent demo then multi-agent ranking."""
-    single = run_single_agent_demo(data_dir=data_dir, print_fn=print_fn)
+    single = run_single_agent_demo(
+        data_dir=data_dir,
+        print_fn=print_fn,
+        verbose=verbose,
+        show_banners=show_banners,
+    )
     ranked: list[AgentReputation] = []
     if not skip_multi:
-        if print_fn:
-            print_fn("")
-        ranked = run_multi_agent_ranking_demo(data_dir=data_dir, print_fn=print_fn)
+        print_fn("")
+        ranked = run_multi_agent_ranking_demo(
+            data_dir=data_dir,
+            print_fn=print_fn,
+            verbose=verbose,
+            show_banners=show_banners,
+        )
 
     return {
         "single_agent": single,

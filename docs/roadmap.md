@@ -1,70 +1,99 @@
 # ForgeResonance Roadmap
 
-## M1: Foundation (Current — Q3 2026)
+Last updated: July 2026
 
-**Status: In Progress**
+---
+
+## Milestone Summary
+
+| Milestone | Status | Theme |
+|-----------|--------|-------|
+| M1 Foundation | **Complete** | Agent runtime, memory, scoring, Arcly contract |
+| M2 Intent Harvesting | **Complete** | Embedding harvester, multi-turn, Firecrawl hook |
+| M3 Resonance Engine | **Complete** | Grok prompts, templates, injection, reputation layer |
+| M4 Fabric & Edge | **Next** | Cloudflare Workers, KV reputation, swarm routing |
+| M5 Production Launch | Planned | Dashboard, full observability, operator tooling |
+
+---
+
+## M1: Foundation — Complete
 
 | Deliverable | Status |
 |-------------|--------|
 | Project structure and core modules | Done |
-| ResonanceAgent lifecycle skeleton | Done |
+| ResonanceAgent lifecycle | Done |
 | File + SQLite + Neon memory backends | Done |
 | Resonance Score engine with ledger | Done |
 | Arcly handoff contract | Done |
-| Neon database schema (via MCP) | Done |
+| Neon database schema | Done |
 | GitHub repository | Done |
-| Linear project + issues | Done |
-| Notion documentation hub | Done |
-| Unit test suite | Done |
+| Unit test suite (~110 tests) | Done |
 | Vercel deployment config | Done |
-
-**Next steps:**
-- Wire real IntentHarvester into agent loop
-- Implement Grok API calls in ResonanceEngine
-- End-to-end test with Arcly staging
+| Interactive demo (`python -m demo`) | Done |
 
 ---
 
-## M2: Intent Harvesting (Q4 2026)
+## M2: Intent Harvesting — Complete
 
-- Local embedding pipeline for intent vectors
-- Browser extension signal adapter (opt-in)
-- Firecrawl integration for opt-in web enrichment
+| Deliverable | Status |
+|-------------|--------|
+| `EmbeddingIntentHarvester` with keyword + embedding scoring | Done |
+| Multi-turn context boost | Done |
+| `ingest_text`, `ingest_from_chat`, `ingest_from_webhook` APIs | Done |
+| Firecrawl enrichment hook (`FIRECRAWL_ENABLED`) | Done |
+| Privacy boundary (hashed signals) | Done |
+
+**Remaining (M4+):**
+
+- Browser extension signal adapter
 - Zero-knowledge intent attestation prototype
-- Privacy audit and consent management UI
-
-**Linear:** ARC-23
+- Consent management UI
 
 ---
 
-## M3: Resonance Engine (Q4 2026)
+## M3: Resonance Engine — Complete
 
-- Full Grok prompt engineering with episodic memory
-- Offer catalog and score-weighted matching
-- Quality estimation model
+| Deliverable | Status |
+|-------------|--------|
+| Grok prompt engineering with episodic memory | Done |
+| Context-aware template fallback (no API key) | Done |
+| Quality estimation model | Done |
+| `ValueInjector` delivery modes | Done |
+| `OfferFramer` for commercial intents | Done |
+| `ResonanceScoreManager` + `rank_agents()` | Done |
+| Multi-agent demo ranking | Done |
+| Arcly two-way feedback (`/api/arcly_feedback`) | Done |
+
+**Remaining (M5):**
+
 - A/B resonance variant generation
-- Contextual value templates
+- Offer catalog UI for operators
 
 ---
 
-## M4: Fabric & Reputation (Q1 2027)
+## M4: Fabric & Edge — Next (Q3–Q4 2026)
 
-- Cloudflare Workers deployment for edge agents
-- KV-backed reputation cache with Neon sync
-- Multi-agent collaboration protocol
-- Fabric-wide health dashboard (Axiom)
-- Decentralized score consensus (research)
+Priority work for public-scale deployment:
+
+- [ ] Cloudflare Workers deployment for edge agents
+- [ ] KV-backed reputation cache with Neon sync
+- [ ] Fabric router: weighted random selection via `selection_weight`
+- [ ] Multi-agent collaboration protocol
+- [ ] Fabric-wide health dashboard (Axiom)
+- [ ] Decentralized score consensus (research)
+
+**Success criteria:** Route intent across 100+ edge agents using KV-cached reputation with Neon as source of truth.
 
 ---
 
 ## M5: Production Launch (Q1 2027)
 
-- Sentry error monitoring in production
-- Axiom telemetry pipeline
-- Vercel serverless API for agent management
-- Operator dashboard
-- Arcly production handoff
-- Documentation and onboarding
+- [ ] Sentry error monitoring in production
+- [ ] Axiom telemetry pipeline (full event stream)
+- [ ] Vercel serverless API for agent management
+- [ ] Operator dashboard
+- [ ] Arcly production handoff hardening
+- [ ] Public onboarding and documentation site
 
 ---
 
@@ -72,14 +101,23 @@
 
 | MCP | Current Use | Future Use |
 |-----|-------------|------------|
-| GitHub | Source control | CI/CD, release automation |
+| GitHub | Source control, commits | CI/CD, release automation |
 | Neon | Agent memory + scoring | Branch-per-agent dev environments |
 | Vercel | API deployment | Serverless agent endpoints |
 | Cloudflare | Documented | Edge reputation, Workers agents |
 | Linear | Task tracking | Sprint automation |
-| Notion | Project docs | Archivist agent knowledge base |
-| Firecrawl | Documented hook | Intent enrichment |
+| Notion | Project docs | Archivist knowledge base |
+| Firecrawl | Intent enrichment hook | Production enrichment pipeline |
 | Sentry | Logging hook | Production error monitoring |
 | Axiom | Event emission hook | Full telemetry pipeline |
-| Figma | — | Architecture diagrams |
-| MongoDB | — | Alternative document store if needed |
+
+---
+
+## Immediate Next Steps
+
+1. **Documentation polish** — README, getting-started, demo UX (this release)
+2. **Edge prototype** — single Worker agent + KV reputation read
+3. **Swarm router** — weighted selection over `rank_agents()` output
+4. **Operator API** — `/api/agents` CRUD on Vercel
+
+See [getting-started.md](getting-started.md) to run what exists today.

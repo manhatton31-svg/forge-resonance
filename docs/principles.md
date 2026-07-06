@@ -2,6 +2,8 @@
 
 These principles are non-negotiable. Every architectural decision, module boundary, and integration point must serve them.
 
+---
+
 ## 1. Sovereignty First
 
 Agents are first-class citizens. Each agent:
@@ -17,13 +19,11 @@ No central orchestrator assigns agent behavior. The Fabric is a coordination spa
 
 Intent is the most sensitive signal in the system. ForgeResonance treats it accordingly:
 
-- **Local processing only** — raw signals never leave the device
+- **Local processing only** — raw signals never leave the device unhashed
 - **Opt-in required** — harvesting disabled until explicit consent
 - **Hashed representations** — only anonymized intent vectors propagate
 - **No central data collection** — no Fabric-wide intent database
 - **Zero-knowledge ready** — architecture supports ZK proofs for intent attestation
-
-Future: embedding-based similarity without transmitting source text.
 
 ## 3. Resonance Over Advertising
 
@@ -41,37 +41,37 @@ An agent that consistently delivers contextual value earns more Fabric visibilit
 ## 4. Positive-Sum Flywheel
 
 ```
-Successful resonance → Score increase → Higher visibility → More resonance opportunities
-        ↑                                                              |
-        └──────────── Improved generation from episodic memory ────────┘
+Successful resonance → Score increase → Higher visibility → More opportunities
+        ↑                                                    |
+        └──── Improved generation from episodic memory ──────┘
 
 Poor resonance → Score decrease → Lower visibility → Self-correction
 ```
 
-The Resonance Score is the reputation primitive. It is transparent, auditable (via `reputation_ledger`), and designed for future decentralized consensus on Cloudflare edge.
+The Resonance Score is transparent and auditable via `reputation_ledger`. Future: decentralized consensus on Cloudflare edge.
 
 ## 5. Arcly Integration as Core
 
 ForgeResonance senses intent and delivers value. Arcly closes the loop:
 
 - Qualified resonances hand off to Arcly AI Closer
-- Email optimization and conversion tracking flow back as outcomes
-- Outcomes feed the Resonance Score engine
+- Conversion outcomes flow back as score updates
+- `OfferFramer` prepares commercial intents for conversion
 
-The handoff contract (`integration/arcly_handoff.py`) is a stable API boundary between the two systems.
+The handoff contract (`integration/arcly_handoff.py`) is a stable API boundary.
 
 ## 6. Grok-Native & xAI-First
 
-Generation, matching, and reflection are optimized for Grok models:
+Generation is optimized for Grok models with template fallback for sovereignty:
 
 - xAI API as primary inference backend
-- Agent memory and goals injected into Grok prompts
-- Episodic memory summaries inform generation quality
-- Model selection via `GROK_MODEL` environment variable
+- Agent memory and goals injected into prompts
+- Episodic summaries inform generation quality
+- `GROK_MODEL` configurable via environment
 
 ## 7. Original Design
 
-ForgeResonance is not a wrapper around existing advertising platforms, marketing automation tools, or agent frameworks. Every component is designed from first principles for the resonance paradigm.
+ForgeResonance is not a wrapper around advertising platforms or generic agent frameworks. Every component is designed for the resonance paradigm.
 
 ## 8. Modularity & Extensibility
 
@@ -93,5 +93,56 @@ From day one:
 - Structured logging with Sentry/Axiom hooks
 - Testable with dependency injection
 - Environment-driven configuration
-- Database schema provisioned via Neon MCP
 - Deployment-ready for Vercel and Cloudflare
+
+---
+
+## Glossary
+
+### Resonance
+
+A completed agent cycle: detect intent → generate value → inject → hand off (optional) → reflect on outcome. The unit of work that updates reputation.
+
+### Resonance Score
+
+Numeric reputation on a 0–100 scale (default 50). Increases on success/partial outcomes, decreases on failure/rejection. Stored in `reputation_ledger` with full audit trail.
+
+**Outcome deltas:** success +2.5, partial +0.5, failure −1.5, rejection −3.0 (scaled by quality on positive outcomes).
+
+### Visibility Multiplier
+
+Derived from Resonance Score via `get_visibility_multiplier()`. Range **0.1 to 2.0**. Determines how prominently an agent appears when the Fabric routes intent across multiple agents.
+
+| Score | Approx. visibility |
+|-------|-------------------|
+| 0 | 0.10 |
+| 50 | 1.05 |
+| 100 | 2.00 |
+
+### Selection Weight
+
+`visibility_multiplier × (resonance_score / 100)`. Used by `rank_agents()` to order agents for swarm routing. Higher weight → preferred for the next intent signal.
+
+### ResonancePayload
+
+Structured output from `ResonanceEngine`: `summary`, `recommended_action`, `value_proposition`, `resonance_type`, `quality_estimate`, and metadata. Consumed by `ValueInjector`.
+
+### OfferFramer
+
+`integration/offer_framer.py` — transforms commercial intents into `offer_ready` payloads with `offer_id`, `offer_url`, `cta_text`, and `value_prop` for Arcly handoff.
+
+### IntentSignal
+
+Privacy-preserving harvested intent: type label, confidence, hashed context vector. Never contains raw user text in downstream propagation.
+
+### ResonanceScoreManager
+
+Central reputation API in `reputation/score_layer.py`. Records outcomes, serves analytics, and backs `ReputationLayer.rank_agents()`.
+
+---
+
+## Related Docs
+
+- [architecture.md](architecture.md) — technical layer design
+- [getting-started.md](getting-started.md) — hands-on introduction
+- [roadmap.md](roadmap.md) — what's built and what's next

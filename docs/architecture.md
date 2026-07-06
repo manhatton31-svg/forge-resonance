@@ -4,6 +4,14 @@
 
 ForgeResonance is a decentralized fabric of sovereign AI agents that earn distribution through demonstrated resonance success. The system replaces paid advertising with a utility-driven, reputation-weighted coordination layer.
 
+**Core loop per agent:**
+
+```
+Harvest → Generate → Inject → Handoff → Reflect → (idle)
+```
+
+**Fabric-level view:**
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     ForgeResonance Fabric                           │
@@ -12,25 +20,38 @@ ForgeResonance is a decentralized fabric of sovereign AI agents that earn distri
 │  │  Agent A     │  │  Agent B     │  │  Agent C     │  ...         │
 │  │  (sovereign) │  │  (sovereign) │  │  (sovereign) │              │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘              │
-│         │                 │                 │                       │
 │         └─────────────────┼─────────────────┘                       │
-│                           │                                         │
-│              ┌────────────▼────────────┐                            │
-│              │   Reputation Layer      │                            │
-│              │   (Resonance Score)     │                            │
-│              └────────────┬────────────┘                            │
-│                           │                                         │
-│              ┌────────────▼────────────┐                            │
-│              │   Neon Postgres         │                            │
-│              │   (shared ledger)       │                            │
-│              └─────────────────────────┘                            │
-└─────────────────────────────────────────────────────────────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │   Arcly AI Closer       │
-              │   (conversion layer)    │
-              └─────────────────────────┘
+│                           ▼                                         │
+│              ┌────────────────────────┐                             │
+│              │   Reputation Layer     │                             │
+│              │   (Resonance Score)    │                             │
+│              └────────────┬───────────┘                             │
+│                           ▼                                         │
+│              ┌────────────────────────┐                             │
+│              │   Neon Postgres        │  optional                   │
+│              └────────────────────────┘                             │
+└───────────────────────────┬─────────────────────────────────────────┘
+                            ▼
+              ┌────────────────────────┐
+              │   Arcly AI Closer      │
+              └────────────────────────┘
 ```
+
+## Key Concepts
+
+| Term | Definition |
+|------|------------|
+| **Resonance** | One full cycle from intent detection through value delivery and score reflection |
+| **Resonance Score** | 0–100 reputation metric; default 50; updated per outcome tier |
+| **Visibility Multiplier** | Score → routing weight mapping (0.1–2.0); used in multi-agent selection |
+| **Selection Weight** | `visibility × (score/100)` — ranking metric for swarm routing |
+| **ResonancePayload** | Structured value unit: summary, action, value prop, type, quality |
+| **OfferFramer** | Tags commercial intents with offer-ready metadata for Arcly |
+| **IntentSignal** | Privacy-preserving harvested intent (hashed context, confidence, type) |
+
+See [principles.md](principles.md) for design rationale.
+
+---
 
 ## Layer Architecture
 
@@ -49,8 +70,6 @@ The foundational primitive. Each agent:
 
 Privacy-preserving local intent detection via `EmbeddingIntentHarvester`:
 
-**How intent enters the Fabric:**
-
 ```
 External source                Harvester                     Agent loop
 ───────────────               ─────────────                 ──────────
@@ -61,252 +80,100 @@ ingest_from_webhook()──►  multi-turn context boost             run_once()
        └── URL in text ──► FirecrawlEnricher (opt-in)
 ```
 
-**Intent patterns:** purchase, research, comparison, problem_solving, support, evaluation — each with keywords, examples, and centroid embeddings.
+**Intent patterns:** purchase, research, comparison, problem_solving, support, evaluation.
 
-**Confidence scoring:** keyword hits (45%) + embedding similarity (55%) + multi-turn boost + Firecrawl enrichment bonus. Signals below `INTENT_RESONANCE_THRESHOLD` are skipped.
-
-**Ingestion APIs:**
-- `ingest_text(text)` — raw text from any source
-- `ingest_from_chat({"text", "role", "metadata"})` — chat messages
-- `ingest_from_webhook({"source", "text", "url", "metadata"})` — external webhooks
-
-**Multi-turn context:** Recent signals stored in `recent_intent_signals` working memory for disambiguation across turns.
-
-**Firecrawl enrichment:** When `FIRECRAWL_ENABLED=true`, URLs in text are scraped via Firecrawl REST API (same backend as MCP `firecrawl_scrape`). Only anonymized summary hashes enter the signal context.
+**Confidence scoring:** keyword hits (45%) + embedding similarity (55%) + multi-turn boost + Firecrawl bonus. Signals below `INTENT_RESONANCE_THRESHOLD` are skipped.
 
 **Privacy boundary:** Raw text is hashed locally; only `IntentSignal` context vectors propagate downstream.
 
 ### 3. Resonance Matching & Generation (`generation/`)
 
-The `ResonanceEngine` transforms a harvested `IntentSignal` into a structured
-`ResonancePayload` — the unit of contextual value injected into the user's flow.
-
-**How resonant value is generated:**
+`ResonanceEngine` transforms `IntentSignal` + agent context into a `ResonancePayload`.
 
 ```
 IntentSignal + AgentMemory + Resonance Score
         │
         ▼
   Build GenerationContext
-  (topic, matched_intent, resonance_type, episodic insights)
         │
-        ├── XAI_API_KEY set? ──► Grok (system prompt + user context)
-        │                              │
-        │                         parse JSON ──► ResonancePayload
-        │
-        └── no key / API failure ──► context-aware template fallback
+        ├── XAI_API_KEY set? ──► Grok ──► parse JSON ──► ResonancePayload
+        └── no key / failure   ──► context-aware template fallback
 ```
 
-**Inputs woven into every payload:**
+**Resonance types:** `educational`, `comparative`, `solution_oriented`, `offer_framed`
 
-| Input | Role |
-|-------|------|
-| Agent goals | Ground recommendations in sovereign objectives |
-| Episodic memory | Success rate, avg quality, recent topics inform tone |
-| Resonance Score | Visibility weight; higher scores → more assertive framing |
-| Intent confidence | Gates generation; boosts quality estimate and CTA strength |
-| `matched_intent` | Maps to resonance type (educational, comparative, etc.) |
-
-**Resonance types:**
-
-- `educational` — research intents; orient and summarize
-- `comparative` — comparison intents; criteria-based trade-offs
-- `solution_oriented` — problem/support intents; diagnostic next steps
-- `offer_framed` — purchase/evaluation intents; soft or direct offer linkage
-
-**Payload structure (`ResonancePayload`):**
-
-```json
-{
-  "summary": "1-2 sentence need capture",
-  "recommended_action": "single imperative next step",
-  "value_proposition": "delivered resonant message",
-  "confidence": 0.0,
-  "resonance_type": "educational",
-  "quality_estimate": 0.0,
-  "metadata": { "offer_url": "...", "cta_label": "..." },
-  "content": { "...mirrors structured fields for injectors..." }
-}
-```
-
-**Grok prompt engineering:** A system prompt carries agent identity, goals,
-episodic summary, intent label/confidence, and resonance-type guidance. The
-user turn adds signal hash and extra context vector fields. Temperature and
-max tokens are configurable via `GROK_TEMPERATURE` and `GROK_MAX_TOKENS`.
-
-**Template fallback:** When Grok is unavailable, type-specific builders still
-reference goals, episodic momentum, and score — producing usable payloads without
-an API key.
-
-**Quality estimation:** Blends intent confidence (35%), Resonance Score (25%),
-episodic momentum (25%), and intent-type fit (15%) to feed the scoring engine.
+**Quality estimation:** Blends intent confidence (35%), score (25%), episodic momentum (25%), intent-type fit (15%).
 
 ### 4. Contextual Value Injection (`injection/`)
 
-The `ValueInjector` transforms structured `ResonancePayload` fields into
-deliverable output and returns a typed `InjectionResult`.
-
-**Delivery modes:**
+`ValueInjector` delivers `ResonancePayload` via configurable modes:
 
 | Mode | Output |
 |------|--------|
-| `echo` | Print raw/test output to stdout (dev and demos) |
-| `formatted_message` | Human-readable markdown message (default) |
-| `structured_card` | JSON card for chat widgets / in-app UI |
-| `offer_ready` | Conversion package with offer URL, CTA, and card |
+| `echo` | Raw stdout (dev) |
+| `formatted_message` | Human-readable markdown (default) |
+| `structured_card` | JSON card for chat widgets |
+| `offer_ready` | Conversion package with CTA and offer URL |
 
-**Formatting:** `PayloadFormatter` supports `simple` and `rich` templates,
-pulling `summary`, `recommended_action`, `value_proposition`, `confidence`,
-and `quality_estimate` from payload fields.
-
-**Injection pipeline:**
-
-```
-ResonancePayload
-      │
-      ▼
-PayloadFormatter (simple / rich / card / offer package)
-      │
-      ├── delivery mode render
-      ├── optional echo
-      ├── on_deliver callback
-      ├── post_inject hooks
-      └── prepare_for_handoff → handoff_package on payload.content
-```
-
-**Hooks & extensibility:**
-
-- `on_deliver(payload, result)` — fire after formatting, before outcome return
-- `post_inject_hooks` — list of callbacks receiving `InjectionResult`
-- `InjectionChannel` ABC — plug in email, chat, web, or other channels later
-
-**Arcly integration:** When `prepare_handoff=True` (default), the injector
-attaches `handoff_package` to `payload.content`. `ArclyHandoff` prefers this
-enriched package (formatted message, structured card, signal context, offer
-metadata) over raw generation content.
+When `prepare_handoff=True`, attaches `handoff_package` to payload content for Arcly.
 
 **Outcome tiers:** quality ≥ 0.7 → success; ≥ 0.4 → partial; else failure.
-Channel selection uses signal confidence (inline when > 0.8) and source
-(`chat`, `webhook`, etc.).
 
 ### 5. Reputation / Resonance Score (`reputation/`, `core/scoring.py`)
 
-The Fabric's reputation primitive powers the **distribution flywheel**: agents
-that demonstrate resonance success earn higher visibility in multi-agent matching.
-
-**`ResonanceScoreManager`** (`reputation/score_layer.py`) is the central API:
+`ResonanceScoreManager` (`reputation/score_layer.py`) records outcomes and drives the distribution flywheel.
 
 ```
-Reflect step (ResonanceAgent._finalize)
-        │
-        ▼
-record_outcome(agent_id, outcome, quality, metadata)
-        │
-        ├── ResonanceScorer.apply_outcome → score delta + ledger
-        └── OutcomeHistoryStore → analytics persistence
+Reflect step → record_outcome() → ResonanceScorer + OutcomeHistoryStore
 ```
-
-**Persistence chain:** Neon Postgres when `DATABASE_URL` is reachable → SQLite
-(`forge_resonance.db`) fallback → in-memory for tests.
-
-**Recorded metrics per cycle:** outcome tier, `quality_estimate`, signal
-`confidence`, `resonance_type`, `offer_id`, and offer metadata.
 
 **Visibility multiplier** (`get_visibility_multiplier(score)`):
 
-- Maps Resonance Score [0, 100] → multiplier [0.1, 2.0]
-- Default score 50 → visibility ~1.05
-- Used by `ReputationLayer.rank_agents()` to prioritize high-trust agents
+- Maps score [0, 100] → multiplier [0.1, 2.0]
+- Score 50 → visibility ≈ 1.05
 
-**Analytics** (`get_analytics` / `agent.get_reputation_stats()`):
+**Multi-agent ranking:** `ReputationLayer.rank_agents()` sorts by `selection_weight` with tie-breakers on visibility, score, and success rate.
 
-| Metric | Description |
-|--------|-------------|
-| `total_resonances` | Outcomes recorded in history window |
-| `success_rate` | Fraction of success + partial outcomes |
-| `average_quality` | Mean quality_estimate across window |
-| `trend` | improving / declining / stable (sliding window) |
-
-**Score parameters:**
-
-- Score range: 0–100 (default: 50)
-- Outcome-tier deltas: success (+2.5), partial (+0.5), failure (−1.5), rejection (−3.0)
-- Quality multiplier on positive deltas
-- Full audit trail in `reputation_ledger` + `reputation_outcomes`
-
-**Decentralized distribution (roadmap):**
-
-1. Agents earn score through demonstrated resonance (current)
-2. `ReputationLayer.rank_agents()` weights selection by visibility (current)
-3. Cloudflare KV replicates score snapshots to edge (planned)
-4. Fabric-wide consensus on reputation without central orchestration (planned)
-
-**Multi-agent ranking:** `rank_agents()` sorts by `selection_weight`
-(visibility × score/100) with tie-breakers on visibility, score, and success
-rate. Returns 1-indexed `AgentReputation` snapshots — the primitive a Fabric
-router will use to sample agents proportionally in swarms.
+**Persistence:** Neon Postgres (when `DATABASE_URL` set) → SQLite fallback → in-memory for tests.
 
 ### 6. Demo & Bootstrap Layer (`demo/`)
 
-Interactive showcase for the full pipeline without API keys:
+Interactive showcase without API keys:
 
 ```bash
-python -m demo              # single agent + multi-agent ranking
+python -m demo              # single + multi-agent
 python -m demo --multi-only # ranking only
+python -m demo --help       # phase documentation
 ```
 
-| Phase | What it demonstrates |
-|-------|---------------------|
-| Single agent | Harvest → Generate → Inject → Handoff → Reflect with formatted output |
-| Multi-agent | Shared `ResonanceScoreManager`, divergent scores, `rank_agents()` |
-
-**Swarm scaling:** Today's demo runs 3 agents in-process. At scale, each agent
-runs sovereignly at the edge; the Fabric router calls `rank_agents()` (or KV
-cache) to pick who receives each intent signal. Selection weight generalizes to
-weighted random routing across hundreds of agents.
+| Phase | Demonstrates |
+|-------|--------------|
+| Single agent | Harvest → Generate → Inject → Handoff → Reflect |
+| Multi-agent | Shared score manager, divergent outcomes, `rank_agents()` |
 
 ### 7. Arcly Integration (`integration/`)
 
-Production handoff to the Arcly AI Closer for conversion optimization.
-
 ```
 ResonanceAgent → ValueInjector → OfferFramer → ArclyHandoff → Arcly AI Closer
-                     │                              │                │
-              handoff_package              agent_stats +         conversion
-              offer_bundle                 offer_bundle          outcome
-                                                    │                │
-                                                    └──── report_outcome()
-                                                              │
-                                                    ResonanceScoreManager
+                     │                              │
+              handoff_package              agent_stats + offer_bundle
+                                                    │
+                              report_outcome() ←────┘
 ```
 
 **Handoff modes** (`ARCLY_MODE`):
 
 | Mode | Behavior |
 |------|----------|
-| `auto` (default) | Live when `ARCLY_API_KEY` + non-local `ARCLY_API_URL` |
-| `dry_run` | Simulated acceptance, logs reputation context |
-| `live` | POST with Bearer auth, retries, timeout |
+| `auto` | Live when key + non-local URL |
+| `dry_run` | Simulated acceptance (demo default) |
+| `live` | POST with Bearer auth, retries |
 
-**`handoff_with_context()`** sends reputation snapshot alongside payload:
-`resonance_score`, `visibility_multiplier`, `success_rate`, `trend`, `offer_bundle`.
+**OfferFramer:** Commercial intents get `offer_id`, `offer_url`, `cta_text`, `value_prop` in payload and handoff.
 
-**Offer framing** (`integration/offer_framer.py`): Commercial intents
-(`purchase_intent`, `evaluation_intent`) are tagged `offer_ready` with
-`offer_id`, `offer_url`, `cta_text`, and `value_prop` embedded in payload
-and handoff package.
-
-**Two-way feedback:** `ArclyHandoff.report_outcome()` and `POST /api/arcly_feedback`
-accept async conversion results from Arcly and update Resonance Score via
-`ResonanceScoreManager` when `ARCLY_FEEDBACK_ENABLED=true`.
-
-**Retry policy:** `ARCLY_HANDOFF_MAX_RETRIES` with exponential backoff
-(`ARCLY_HANDOFF_RETRY_DELAY`). Failures return `ResonanceOutcome.FAILURE`
-with structured logging and Axiom events.
+**Feedback:** `report_outcome()` and `POST /api/arcly_feedback` update score when `ARCLY_FEEDBACK_ENABLED=true`.
 
 ### 8. Memory Subsystem (`core/memory.py`)
-
-Three-tier storage:
 
 | Tier | Backend | Purpose |
 |------|---------|---------|
@@ -314,26 +181,19 @@ Three-tier storage:
 | Episodic | File/SQLite/Neon | Long-term resonance history |
 | Hybrid | File + Neon sync | Offline sovereignty + Fabric scale |
 
-**Neon schema** (provisioned via Neon MCP):
-
-- `agents` — identity, score, goals
-- `working_memory` — keyed short-term store
-- `episodic_memory` — resonance history
-- `resonance_events` — event stream
-- `reputation_ledger` — score audit trail
-
 ### 9. Observability (`utils/logging.py`)
 
-- Structured JSON logging
-- Sentry error capture (when `SENTRY_DSN` set)
-- Axiom event emission (when `AXIOM_TOKEN` set)
-- Cloudflare Logpush compatible format
+- Structured JSON logging (`LOG_LEVEL`)
+- Sentry (when `SENTRY_DSN` set)
+- Axiom events (when `AXIOM_TOKEN` set)
+
+---
 
 ## Data Flow
 
 ```
 1. Agent loop starts (idle)
-2. Harvester senses local intent → IntentSignal (or None → skip)
+2. Harvester senses intent → IntentSignal (or None → skip)
 3. Engine generates ResonancePayload weighted by score
 4. Injector delivers value → outcome tier
 5. Handoff sends qualified resonances to Arcly
@@ -341,6 +201,8 @@ Three-tier storage:
 7. Episodic memory records the cycle
 8. Agent returns to idle
 ```
+
+---
 
 ## Deployment Topology
 
@@ -353,37 +215,25 @@ Local Python process
   └── Neon sync (when DATABASE_URL set)
 ```
 
-### Production (planned)
+### Production (planned — M4/M5)
 
 ```
 Vercel Serverless Functions
-  ├── /api/agents — agent management API
-  ├── /api/resonance — resonance event ingestion
-  └── /api/health — Fabric health check
+  ├── /api/agents
+  ├── /api/resonance
+  ├── /api/arcly_feedback
+  └── /api/health
 
 Cloudflare Workers (edge)
   ├── Reputation KV cache
-  ├── Intent preprocessing (privacy boundary)
-  └── Agent lightweight runners
+  ├── Intent preprocessing
+  └── Lightweight agent runners
 
 Neon Postgres
   └── Authoritative memory + reputation store
 ```
 
-## MCP Integration Map
-
-| MCP Server | Role in Architecture |
-|------------|---------------------|
-| **grok_com_github** | Source control, CI/CD foundation |
-| **neon** | Production Postgres (project: `forge-resonance`) |
-| **grok_com_vercel** | Serverless API deployment |
-| **Cloudflare plugins** | Edge reputation, Workers, observability |
-| **grok_com_linear** | Engineering task tracking |
-| **grok_com_notion** | Project documentation hub |
-| **firecrawl** | Opt-in intent enrichment (M2) |
-| **sentry** | Error monitoring |
-| **axiom** | Telemetry and alerting |
-| **mongodb** | Alternative document store (if needed) |
+---
 
 ## Extension Points
 
@@ -400,10 +250,20 @@ ScoreStore               → core/scoring.py
 
 Custom agents in `agents/` compose these interfaces without modifying core modules.
 
+---
+
 ## Security Model
 
 - No central intent database
-- DATABASE_URL and API keys via environment only
+- Secrets via environment only
 - Agent data isolated by name/ID
 - Reputation ledger is append-only
 - Arcly handoff uses Bearer token auth
+
+---
+
+## Related Docs
+
+- [getting-started.md](getting-started.md) — run the demo in < 2 minutes
+- [principles.md](principles.md) — design constraints
+- [roadmap.md](roadmap.md) — milestone status
