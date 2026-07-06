@@ -235,7 +235,7 @@ See [.env.example](.env.example) for all variables with inline comments.
 | `python -m demo` | Full showcase: single agent + multi-agent ranking |
 | `python -m demo --single-only` | One agent, four intent cycles, reputation stats |
 | `python -m demo --multi-only` | Three agents, divergent scores, ranking table |
-| `python -m demo --swarm-only` | Route intents by reputation + capability matching |
+| `python -m demo --swarm-only` | Swarm execute: route, run agents, aggregate outcomes |
 | `python -m demo --verbose` | Full formatted resonant messages per cycle |
 | `python -m demo --data-dir ./tmp` | Custom demo data directory |
 
@@ -243,7 +243,34 @@ See [.env.example](.env.example) for all variables with inline comments.
 
 **Multi-agent phase** demonstrates: shared `ResonanceScoreManager`, `rank_agents()` by selection weight, swarm routing primitive.
 
-**Swarm routing** (`--swarm-only`) demonstrates: `AgentRegistry`, `IntentRouter`, and `SwarmCoordinator` assigning purchase/research/support intents to the best-matched agents.
+**Swarm execution** (`--swarm-only`) demonstrates: `AgentRegistry`, `IntentRouter`, and `SwarmCoordinator.execute()` routing purchase/research/support intents, running resonance cycles on bound agents, and aggregating `SwarmResult` outcomes with reputation feedback.
+
+### Swarm execution example
+
+```python
+from core.resonance_agent import IntentSignal
+from fabric.swarm import SwarmCoordinator, SwarmStrategy
+
+signal = IntentSignal.from_context(
+    {"matched_intent": "purchase_intent", "text": "I want analytics pricing"},
+    confidence=0.85,
+)
+
+swarm = SwarmCoordinator(registry, reputation_layer)
+swarm.bind_agents([atlas_agent, nova_agent, echo_agent])
+
+# Best single agent runs one cycle
+result = swarm.execute(signal, strategy=SwarmStrategy.BEST_SINGLE)
+print(result.best_result.agent_name, result.swarm_quality)
+
+# Broadcast to top 3 and aggregate consensus
+broadcast = swarm.execute(
+    signal,
+    strategy=SwarmStrategy.BROADCAST_TOP_N,
+    top_n=3,
+)
+print(broadcast.consensus_outcome, broadcast.success_count)
+```
 
 ---
 

@@ -176,9 +176,9 @@ Enable with `EDGE_REPUTATION_ENABLED=true` plus `CLOUDFLARE_API_TOKEN`, `CLOUDFL
 
 Implementation: `reputation/edge_kv.py` (`CloudflareKVClient`).
 
-#### Swarm Routing (M4 — initial)
+#### Swarm Routing & Execution (M4)
 
-Multi-agent intent assignment using reputation + capability:
+Multi-agent intent assignment and execution using reputation + capability:
 
 ```
 IntentSignal → IntentRouter.route()
@@ -188,16 +188,37 @@ IntentSignal → IntentRouter.route()
         ├── capability match (intent label vs goals/specialties)
         └── combined_score = reputation × 0.6 + capability × 0.4 (load-adjusted)
 
-SwarmCoordinator.dispatch()
+SwarmCoordinator.dispatch()          # routing + optional submit (no run_once)
         ├── BEST_SINGLE      → top-1 agent
         └── BROADCAST_TOP_N  → top N agents (default 3)
+
+SwarmCoordinator.execute()           # route → process_intent → aggregate
+        ├── bind_agent() / bind_agents() — live ResonanceAgent instances
+        ├── agent.process_intent(signal) — standardized swarm entry point
+        ├── AgentExecutionResult per participant (outcome, quality, duration)
+        ├── SwarmResult — best result, consensus, swarm_quality, confidence
+        └── reputation feedback (automatic via run_once; manual on failure/timeout)
 ```
+
+**Execution modes**
+
+| Strategy | Behavior |
+|----------|----------|
+| `BEST_SINGLE` | Route to top-1 agent, run one resonance cycle, pick best by quality |
+| `BROADCAST_TOP_N` | Fan out to top N agents, aggregate quality average and consensus outcome |
+
+**Result types**
+
+- `AgentExecutionResult` — per-agent outcome, formatted message, score after cycle
+- `SwarmResult` — original signal, dispatch assignment, aggregated confidence/quality
+
+Unbound agents, timeouts, and exceptions record `OutcomeTier.FAILURE` without double-counting successful `run_once()` paths. Optional `apply_swarm_bonus` nudges reputation when swarm-level quality is very high or low.
 
 | Module | Role |
 |--------|------|
 | `agents/registry.py` | Agent directory (goals, specialties, load) |
 | `fabric/router.py` | Intent → agent routing |
-| `fabric/swarm.py` | Swarm dispatch strategies |
+| `fabric/swarm.py` | Swarm dispatch, execution, aggregation |
 | `fabric/capabilities.py` | Intent label → specialty matching |
 
 Demo: `python -m demo --swarm-only`

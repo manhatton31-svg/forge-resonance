@@ -14,6 +14,7 @@ from core.resonance_agent import IntentSignal
 from core.scoring import InMemoryScoreStore, OutcomeTier, ResonanceScorer
 from fabric.capabilities import capability_score_for_agent
 from fabric.router import IntentRouter
+from core.resonance_agent import ResonanceOutcome
 from fabric.swarm import SwarmCoordinator, SwarmStrategy
 from reputation.edge_kv import CloudflareKVClient
 from reputation.score_layer import (
@@ -211,3 +212,138 @@ class TestSwarmCoordinator:
         swarm.dispatch(_purchase_signal(), submit_intent=False)
         swarm.release_load("atlas")
         assert registry.get("atlas").current_load == 0
+
+
+class TestSwarmExecution:
+    def test_execute_unbound_agent_records_failure(
+        self, registry: AgentRegistry, reputation_layer: ReputationLayer
+    ):
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        before = reputation_layer.score_manager.get_score("atlas")
+        result = swarm.execute(_purchase_signal())
+        assert len(result.agent_results) == 1
+        agent_result = result.agent_results[0]
+        assert agent_result.error == "agent not bound to coordinator"
+        assert agent_result.outcome == ResonanceOutcome.FAILURE
+        after = reputation_layer.score_manager.get_score("atlas")
+        assert after < before
+        assert registry.get("atlas").current_load == 0
+
+    def test_execute_best_single_with_demo_agent(self, tmp_path):
+        from demo.bootstrap import create_demo_agent, create_demo_stack
+
+        base = tmp_path / "demo"
+        manager, reputation = create_demo_stack(data_dir=base)
+        registry = AgentRegistry()
+        agent = create_demo_agent(
+            "atlas-analytics",
+            ["maximize analytics conversion"],
+            data_dir=base,
+            score_manager=manager,
+        )
+        registry.register(
+            RegisteredAgent(
+                agent_id=agent.agent_id,
+                name=agent.name,
+                goals=["maximize analytics conversion"],
+                specialties=["commercial", "analytics", "purchase"],
+            )
+        )
+        swarm = SwarmCoordinator(registry, reputation)
+        swarm.bind_agent(agent)
+
+        signal = IntentSignal.from_context(
+            {
+                "matched_intent": "purchase_intent",
+                "topic": "analytics pricing",
+            },
+            confidence=0.85,
+        )
+        result = swarm.execute(signal)
+        assert len(result.agent_results) == 1
+        agent_result = result.agent_results[0]
+        assert agent_result.outcome in (
+            ResonanceOutcome.SUCCESS,
+            ResonanceOutcome.PARTIAL,
+        )
+        assert result.best_result is not None
+        assert result.swarm_quality > 0.0
+        assert result.swarm_confidence > 0.0
+        assert manager.get_score(agent.agent_id) != 50.0
+
+    def test_execute_broadcast_aggregates_consensus(self, tmp_path):
+        from demo.bootstrap import create_demo_agent, create_demo_stack
+
+        base = tmp_path / "demo"
+        manager, reputation = create_demo_stack(data_dir=base)
+        registry = AgentRegistry()
+        specs = [
+            (
+                "atlas-analytics",
+                ["maximize analytics conversion"],
+                ["commercial", "analytics", "purchase"],
+            ),
+            (
+                "nova-research",
+                ["educate buyers during research phase"],
+                ["research", "education"],
+            ),
+            (
+                "echo-support",
+                ["resolve billing issues quickly"],
+                ["support", "billing"],
+            ),
+        ]
+        agents = []
+        for name, goals, specialties in specs:
+            agent = create_demo_agent(name, goals, data_dir=base, score_manager=manager)
+            agents.append(agent)
+            registry.register(
+                RegisteredAgent(
+                    agent_id=agent.agent_id,
+                    name=agent.name,
+                    goals=goals,
+                    specialties=specialties,
+                )
+            )
+        swarm = SwarmCoordinator(registry, reputation)
+        swarm.bind_agents(agents)
+
+        result = swarm.execute(
+            _purchase_signal(),
+            strategy=SwarmStrategy.BROADCAST_TOP_N,
+            top_n=3,
+        )
+        assert len(result.agent_results) == 3
+        assert result.consensus_outcome is not None
+        assert result.success_count >= 1
+        assert all(registry.get(a.agent_id).current_load == 0 for a in agents)
+
+    def test_swarm_bonus_adjusts_reputation(self, registry: AgentRegistry, reputation_layer: ReputationLayer):
+        reputation_layer.score_manager.record_outcome(
+            "atlas", OutcomeTier.SUCCESS, quality=0.95
+        )
+        score_before_bonus = reputation_layer.score_manager.get_score("atlas")
+
+        class _StubAgent:
+            agent_id = "atlas"
+            name = "atlas-analytics"
+
+            def process_intent(self, signal):
+                return ResonanceOutcome.SUCCESS
+
+            def last_quality_estimate(self):
+                return 0.9
+
+            def last_formatted_result(self):
+                return "stub result"
+
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        swarm.bind_agent(_StubAgent())  # type: ignore[arg-type]
+        result = swarm.execute(
+            _purchase_signal(),
+            apply_swarm_bonus=True,
+        )
+        assert result.swarm_quality >= 0.75
+        score_after_bonus = reputation_layer.score_manager.get_score("atlas")
+        assert score_after_bonus > score_before_bonus

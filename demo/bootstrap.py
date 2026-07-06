@@ -481,6 +481,47 @@ SWARM_AGENT_SPECS: tuple[tuple[str, list[str], list[str]], ...] = (
 )
 
 
+def _print_swarm_execution(
+    label: str,
+    result: Any,
+    *,
+    print_fn: PrintFn,
+) -> None:
+    """Compact output for one swarm ``execute()`` result."""
+    from fabric.swarm import SwarmResult
+
+    if not isinstance(result, SwarmResult):
+        return
+    section(f"Execute: {label}", print_fn=print_fn)
+    for agent_result in result.agent_results:
+        status = (
+            agent_result.outcome.value
+            if agent_result.outcome is not None
+            else "unknown"
+        )
+        err = f"  error={agent_result.error}" if agent_result.error else ""
+        print_fn(
+            f"  • {agent_result.agent_name}: {status}  "
+            f"(quality={agent_result.quality:.2f}, "
+            f"score={agent_result.score_after:.1f}, "
+            f"{agent_result.duration_ms:.0f}ms){err}"
+        )
+        summary = _summarize_message(agent_result.formatted_message, max_lines=1)
+        if summary:
+            print_fn(summary)
+    if result.best_result is not None:
+        print_fn(
+            f"  Best: {result.best_result.agent_name}  "
+            f"(swarm_quality={result.swarm_quality:.2f}, "
+            f"confidence={result.swarm_confidence:.2f})"
+        )
+    else:
+        print_fn(
+            f"  Swarm quality={result.swarm_quality:.2f}  "
+            f"confidence={result.swarm_confidence:.2f}"
+        )
+
+
 def run_swarm_routing_demo(
     *,
     data_dir: Path | None = None,
@@ -488,18 +529,19 @@ def run_swarm_routing_demo(
     show_banners: bool = True,
 ) -> list[dict[str, Any]]:
     """
-    Demonstrate intent routing across a small agent swarm.
+    Demonstrate swarm routing and execution across a small agent swarm.
 
-    Uses ``IntentRouter`` + ``SwarmCoordinator`` with reputation ranking
+    Uses ``SwarmCoordinator.execute()`` with reputation ranking
     (edge-aware when ``EDGE_REPUTATION_ENABLED``).
     """
     base = data_dir or Path("data/demo")
     manager, reputation = create_demo_stack(data_dir=base)
 
     if show_banners:
-        banner("ForgeResonance — Swarm Routing Demo", print_fn=print_fn)
+        banner("ForgeResonance — Swarm Execution Demo", print_fn=print_fn)
         print_fn(
-            "  Routes intents to the best-suited agents by reputation + capability.\n"
+            "  Routes intents, runs resonance cycles on selected agents,\n"
+            "  and aggregates outcomes by reputation + capability.\n"
         )
 
     registry = AgentRegistry()
@@ -517,8 +559,7 @@ def run_swarm_routing_demo(
         )
 
     swarm = SwarmCoordinator(registry, reputation)
-    for agent in agents:
-        swarm.bind_agent(agent)
+    swarm.bind_agents(agents)
 
     for agent in agents:
         run_agent_cycles_compact(
@@ -529,47 +570,55 @@ def run_swarm_routing_demo(
 
     results: list[dict[str, Any]] = []
     for intent_label, text in SWARM_ROUTING_INTENTS:
-        section(f"Route: {intent_label}", print_fn=print_fn)
         signal = IntentSignal.from_context(
             {"matched_intent": intent_label, "text": text},
             confidence=0.85,
         )
-        assignment = swarm.dispatch(
+        swarm_result = swarm.execute(
             signal,
             strategy=SwarmStrategy.BEST_SINGLE,
-            submit_intent=False,
         )
-        if assignment.assignments:
-            best = assignment.assignments[0]
-            print_fn(
-                f"  → {best.agent_name}  "
-                f"(weight={best.selection_weight:.3f}, "
-                f"capability={best.capability_score:.2f}, "
-                f"source={best.score_source})"
-            )
+        _print_swarm_execution(intent_label, swarm_result, print_fn=print_fn)
+        if swarm_result.best_result is not None:
+            best = swarm_result.best_result
             results.append({
                 "intent": intent_label,
                 "agent": best.agent_name,
-                "weight": best.selection_weight,
-                "capability": best.capability_score,
-                "source": best.score_source,
+                "outcome": best.outcome.value if best.outcome else "unknown",
+                "quality": best.quality,
+                "swarm_quality": swarm_result.swarm_quality,
+                "swarm_confidence": swarm_result.swarm_confidence,
             })
         else:
-            print_fn("  → no agent available")
+            print_fn("  → no agent produced a result")
+            results.append({"intent": intent_label, "agent": None})
 
     section("Broadcast top 3 (purchase)", print_fn=print_fn)
     purchase = IntentSignal.from_context(
         {"matched_intent": "purchase_intent", "text": SWARM_ROUTING_INTENTS[0][1]},
         confidence=0.9,
     )
-    broadcast = swarm.dispatch(
+    broadcast_result = swarm.execute(
         purchase,
         strategy=SwarmStrategy.BROADCAST_TOP_N,
         top_n=3,
-        submit_intent=False,
     )
-    names = [a.agent_name for a in broadcast.assignments]
-    print_fn(f"  Agents: {', '.join(names)}")
+    for agent_result in broadcast_result.agent_results:
+        status = (
+            agent_result.outcome.value
+            if agent_result.outcome is not None
+            else "unknown"
+        )
+        print_fn(
+            f"  • {agent_result.agent_name}: {status}  "
+            f"(quality={agent_result.quality:.2f})"
+        )
+    if broadcast_result.consensus_outcome is not None:
+        print_fn(
+            f"  Consensus: {broadcast_result.consensus_outcome.value}  "
+            f"(success={broadcast_result.success_count}/"
+            f"{len(broadcast_result.agent_results)})"
+        )
 
     return results
 

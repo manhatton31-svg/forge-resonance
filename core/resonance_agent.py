@@ -598,6 +598,39 @@ class ResonanceAgent:
         )
         self._memory_store.save(self._memory)
 
+    def process_intent(self, signal: IntentSignal) -> ResonanceOutcome:
+        """
+        Standard swarm entry point: queue ``signal`` and run one resonance cycle.
+
+        Ensures the agent is started, submits text or mock context from the
+        signal, then delegates to ``run_once()`` (which records reputation).
+        """
+        if not self._running:
+            self.start()
+        text = signal.context_vector.get("text") or signal.context_vector.get(
+            "raw_text"
+        )
+        if text:
+            self.submit_intent(str(text))
+        else:
+            self.submit_mock_signal(signal.context_vector, confidence=signal.confidence)
+        return self.run_once()
+
+    def last_formatted_result(self) -> str:
+        """Return formatted resonant value from the most recent injection, if any."""
+        injector = self._injector
+        if hasattr(injector, "last_result") and injector.last_result:
+            return injector.last_result.formatted_message or ""
+        return ""
+
+    def last_quality_estimate(self) -> float:
+        """Return quality estimate from the most recent injection, if any."""
+        injector = self._injector
+        if hasattr(injector, "last_result") and injector.last_result:
+            meta = injector.last_result.metadata or {}
+            return float(meta.get("quality_estimate", 0.0))
+        return 0.0
+
     # -- Internal ------------------------------------------------------------
 
     def _execute_handoff(
