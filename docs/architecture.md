@@ -241,7 +241,31 @@ record_outcome(agent_id, outcome, quality, metadata)
 3. Cloudflare KV replicates score snapshots to edge (planned)
 4. Fabric-wide consensus on reputation without central orchestration (planned)
 
-### 6. Arcly Integration (`integration/`)
+**Multi-agent ranking:** `rank_agents()` sorts by `selection_weight`
+(visibility × score/100) with tie-breakers on visibility, score, and success
+rate. Returns 1-indexed `AgentReputation` snapshots — the primitive a Fabric
+router will use to sample agents proportionally in swarms.
+
+### 6. Demo & Bootstrap Layer (`demo/`)
+
+Interactive showcase for the full pipeline without API keys:
+
+```bash
+python -m demo              # single agent + multi-agent ranking
+python -m demo --multi-only # ranking only
+```
+
+| Phase | What it demonstrates |
+|-------|---------------------|
+| Single agent | Harvest → Generate → Inject → Handoff → Reflect with formatted output |
+| Multi-agent | Shared `ResonanceScoreManager`, divergent scores, `rank_agents()` |
+
+**Swarm scaling:** Today's demo runs 3 agents in-process. At scale, each agent
+runs sovereignly at the edge; the Fabric router calls `rank_agents()` (or KV
+cache) to pick who receives each intent signal. Selection weight generalizes to
+weighted random routing across hundreds of agents.
+
+### 7. Arcly Integration (`integration/`)
 
 Clean handoff contract:
 
@@ -253,7 +277,7 @@ ResonanceAgent → ValueInjector → ArclyHandoff → Arcly AI Closer
                                     ResonanceScoreManager ←──┘
 ```
 
-### 7. Memory Subsystem (`core/memory.py`)
+### 8. Memory Subsystem (`core/memory.py`)
 
 Three-tier storage:
 
@@ -271,7 +295,7 @@ Three-tier storage:
 - `resonance_events` — event stream
 - `reputation_ledger` — score audit trail
 
-### 8. Observability (`utils/logging.py`)
+### 9. Observability (`utils/logging.py`)
 
 - Structured JSON logging
 - Sentry error capture (when `SENTRY_DSN` set)

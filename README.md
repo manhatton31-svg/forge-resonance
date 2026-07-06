@@ -44,6 +44,11 @@ cp .env.example .env
 # Run tests
 python -m pytest tests/ -v
 
+# Quick Demo — full pipeline + multi-agent ranking
+python -m demo
+# Or: python demo/run_demo.py
+# Options: --single-only  --multi-only  --data-dir ./data/demo
+
 # Start an agent (Python)
 python -c "
 from core.resonance_agent import ResonanceAgent
@@ -68,6 +73,7 @@ forge-resonance/
 ├── utils/              # Logging and observability
 ├── api/                # Vercel serverless endpoints
 ├── docs/               # Architecture, principles, roadmap
+├── demo/               # Interactive demo + multi-agent ranking showcase
 ├── tests/              # Test suite
 └── config.py           # Environment-driven configuration
 ```
@@ -132,6 +138,26 @@ vercel
 
 See [docs/architecture.md](docs/architecture.md#deployment-topology) for the planned Cloudflare Workers + KV topology.
 
+## Quick Demo
+
+Run the end-to-end showcase from the project root:
+
+```bash
+python -m demo
+```
+
+This runs two phases:
+
+1. **Single agent** — `atlas-demo` processes four realistic intents (purchase, comparison, research, support). Each cycle prints the formatted resonant value and updates reputation.
+2. **Multi-agent ranking** — Three agents (`atlas-analytics`, `nova-research`, `echo-support`) run overlapping intents. `ReputationLayer.rank_agents()` ranks them by selection weight (visibility × score).
+
+```bash
+python -m demo --single-only    # one agent, four cycles
+python -m demo --multi-only     # ranking showcase only
+```
+
+No API keys required — uses template generation and in-memory reputation.
+
 ## Current Status
 
 **Phase: M1 Foundation — Complete**
@@ -142,13 +168,15 @@ See [docs/architecture.md](docs/architecture.md#deployment-topology) for the pla
 - [x] Resonance Score engine with ledger
 - [x] Arcly handoff contract
 - [x] Neon database schema
+- [x] Interactive demo (`python -m demo`)
+- [x] Multi-agent reputation ranking
 - [x] GitHub repository initialized
 - [x] Linear project + milestone issues
 - [x] Notion documentation hub
 - [x] Unit tests passing
 - [x] Vercel deployment config
 
-**Next:** Wire real harvester + Grok generation (M2/M3). See [docs/roadmap.md](docs/roadmap.md).
+**Next:** Agent swarm routing at scale (M4). See [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 

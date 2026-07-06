@@ -98,6 +98,21 @@ class AgentReputation:
     success_rate: float = 0.0
     average_quality: float = 0.0
     trend_direction: str = TrendDirection.INSUFFICIENT_DATA.value
+    rank: int = 0
+    selection_weight: float = 0.0
+
+    @staticmethod
+    def compute_selection_weight(
+        resonance_score: float,
+        visibility_multiplier: float,
+    ) -> float:
+        """
+        Composite weight for swarm selection.
+
+        visibility × normalized score — higher values surface more often
+        when the Fabric routes intent across many agents.
+        """
+        return visibility_multiplier * (resonance_score / 100.0)
 
 
 class OutcomeHistoryStore(ABC):
@@ -497,18 +512,59 @@ class ReputationLayer:
         self,
         agent_ids: list[str],
         *,
+        agent_names: dict[str, str] | None = None,
         min_visibility: float = 0.0,
+        sort_by: str = "composite",
     ) -> list[AgentReputation]:
         """
-        Rank agents by Resonance Score for matching prioritization.
+        Rank agents for Fabric matching and swarm routing.
 
-        Agents below ``min_visibility`` are excluded from active matching.
+        Sort modes:
+        - ``composite`` (default): selection_weight = visibility × score/100
+        - ``visibility``: visibility multiplier primary
+        - ``score``: Resonance Score primary
+
+        Agents below ``min_visibility`` are excluded. Rank positions are
+        1-indexed on returned snapshots.
         """
-        reputations = [self.get_reputation(aid) for aid in agent_ids]
+        names = agent_names or {}
+        reputations: list[AgentReputation] = []
+        for aid in agent_ids:
+            rep = self.get_reputation(aid, agent_name=names.get(aid, ""))
+            rep.selection_weight = AgentReputation.compute_selection_weight(
+                rep.resonance_score,
+                rep.visibility_multiplier,
+            )
+            reputations.append(rep)
+
         eligible = [
             r for r in reputations if r.visibility_multiplier >= min_visibility
         ]
-        return sorted(eligible, key=lambda r: r.resonance_score, reverse=True)
+
+        if sort_by == "visibility":
+            sort_key = lambda r: (  # noqa: E731
+                r.visibility_multiplier,
+                r.resonance_score,
+                r.success_rate,
+            )
+        elif sort_by == "score":
+            sort_key = lambda r: (  # noqa: E731
+                r.resonance_score,
+                r.visibility_multiplier,
+                r.success_rate,
+            )
+        else:
+            sort_key = lambda r: (  # noqa: E731
+                r.selection_weight,
+                r.visibility_multiplier,
+                r.resonance_score,
+                r.success_rate,
+            )
+
+        ranked = sorted(eligible, key=sort_key, reverse=True)
+        for position, rep in enumerate(ranked, start=1):
+            rep.rank = position
+        return ranked
 
     def sync_to_edge(self, update: ScoreUpdate) -> None:
         """

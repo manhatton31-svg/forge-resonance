@@ -63,11 +63,13 @@ class ArclyHandoff(ArclyHandoffProtocol):
         timeout: int | None = None,
         *,
         force_dry_run: bool = False,
+        quiet: bool = False,
     ) -> None:
         self._api_url = (api_url or ARCLY_API_URL or _DEFAULT_ARCLY_URL).rstrip("/")
         self._api_key = api_key or ARCLY_API_KEY
         self._timeout = timeout or ARCLY_HANDOFF_TIMEOUT_SECONDS
         self._force_dry_run = force_dry_run
+        self._quiet = quiet
 
     @property
     def is_live(self) -> bool:
@@ -193,13 +195,14 @@ class ArclyHandoff(ArclyHandoffProtocol):
             request.quality_estimate,
             message[:120],
         )
-        print(
-            f"\n── Arcly Handoff (dry-run) ──\n"
-            f"  agent={request.agent_id}\n"
-            f"  resonance={request.resonance_id}\n"
-            f"  quality={request.quality_estimate:.2f}\n"
-            f"  message={message[:200]}\n"
-        )
+        if not self._quiet:
+            print(
+                f"\n── Arcly Handoff (dry-run) ──\n"
+                f"  agent={request.agent_id}\n"
+                f"  resonance={request.resonance_id}\n"
+                f"  quality={request.quality_estimate:.2f}\n"
+                f"  message={message[:200]}\n"
+            )
         if request.quality_estimate >= 0.6:
             return ResonanceOutcome.SUCCESS
         return ResonanceOutcome.PARTIAL
