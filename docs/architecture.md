@@ -143,11 +143,51 @@ episodic momentum (25%), and intent-type fit (15%) to feed the scoring engine.
 
 ### 4. Contextual Value Injection (`injection/`)
 
-Delivers generated value into the user's active context:
+The `ValueInjector` transforms structured `ResonancePayload` fields into
+deliverable output and returns a typed `InjectionResult`.
 
-- Channel selection based on signal confidence
-- Preemptive utility delivery (not interruption)
-- Outcome reporting for score engine
+**Delivery modes:**
+
+| Mode | Output |
+|------|--------|
+| `echo` | Print raw/test output to stdout (dev and demos) |
+| `formatted_message` | Human-readable markdown message (default) |
+| `structured_card` | JSON card for chat widgets / in-app UI |
+| `offer_ready` | Conversion package with offer URL, CTA, and card |
+
+**Formatting:** `PayloadFormatter` supports `simple` and `rich` templates,
+pulling `summary`, `recommended_action`, `value_proposition`, `confidence`,
+and `quality_estimate` from payload fields.
+
+**Injection pipeline:**
+
+```
+ResonancePayload
+      │
+      ▼
+PayloadFormatter (simple / rich / card / offer package)
+      │
+      ├── delivery mode render
+      ├── optional echo
+      ├── on_deliver callback
+      ├── post_inject hooks
+      └── prepare_for_handoff → handoff_package on payload.content
+```
+
+**Hooks & extensibility:**
+
+- `on_deliver(payload, result)` — fire after formatting, before outcome return
+- `post_inject_hooks` — list of callbacks receiving `InjectionResult`
+- `InjectionChannel` ABC — plug in email, chat, web, or other channels later
+
+**Arcly integration:** When `prepare_handoff=True` (default), the injector
+attaches `handoff_package` to `payload.content`. `ArclyHandoff` prefers this
+enriched package (formatted message, structured card, signal context, offer
+metadata) over raw generation content.
+
+**Outcome tiers:** quality ≥ 0.7 → success; ≥ 0.4 → partial; else failure.
+Channel selection uses signal confidence (inline when > 0.8) and source
+(`chat`, `webhook`, etc.).
 
 ### 5. Reputation / Resonance Score (`reputation/`, `core/scoring.py`)
 

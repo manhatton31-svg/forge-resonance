@@ -79,15 +79,18 @@ class ArclyHandoff(ArclyHandoffProtocol):
         payload: ResonancePayload,
         signal: IntentSignal,
         agent_id: str,
+        *,
+        handoff_content: dict[str, Any] | None = None,
     ) -> ResonanceOutcome:
         """Send resonance to Arcly for conversion processing."""
+        content = handoff_content or self._resolve_handoff_content(payload)
         request = HandoffRequest(
             agent_id=agent_id,
             resonance_id=payload.resonance_id,
             signal_hash=signal.signal_hash,
-            content=payload.content,
+            content=content,
             quality_estimate=payload.quality_estimate,
-            offer_id=payload.offer_id,
+            offer_id=payload.offer_id or content.get("offer_id"),
         )
 
         if not self._should_send_live():
@@ -117,6 +120,19 @@ class ArclyHandoff(ArclyHandoffProtocol):
         except Exception as exc:
             logger.error("Arcly handoff failed: %s", exc)
             return ResonanceOutcome.FAILURE
+
+    @staticmethod
+    def _resolve_handoff_content(payload: ResonancePayload) -> dict[str, Any]:
+        """
+        Prefer injector-prepared handoff package over raw payload content.
+
+        ValueInjector attaches ``handoff_package`` after injection; fall back
+        to legacy ``content`` when injection prep was skipped.
+        """
+        prepared = payload.content.get("handoff_package")
+        if isinstance(prepared, dict) and prepared:
+            return prepared
+        return payload.content
 
     def _should_send_live(self) -> bool:
         """Determine whether to attempt a real HTTP handoff."""
@@ -164,7 +180,11 @@ class ArclyHandoff(ArclyHandoffProtocol):
 
     def _dry_run(self, request: HandoffRequest) -> ResonanceOutcome:
         """Simulate handoff when Arcly is not configured or unreachable."""
-        message = request.content.get("message", "(no message)")
+        message = (
+            request.content.get("message")
+            or request.content.get("value_proposition")
+            or "(no message)"
+        )
         logger.info(
             "Arcly dry-run handoff: agent=%s resonance=%s quality=%.2f\n"
             "  → %s",
