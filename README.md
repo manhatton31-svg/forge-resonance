@@ -221,7 +221,7 @@ CLOUDFLARE_ACCOUNT_ID=your-account-id
 CLOUDFLARE_KV_NAMESPACE=your-kv-namespace-id
 ```
 
-Scores sync automatically after each `record_outcome()`. Use `resolve_score()` for KV fallback when local state is cold.
+Scores sync automatically after each `record_outcome()`. When enabled, `rank_agents()` reads KV data for ranking (default `EDGE_READ_PREFERENCE=edge_first`) and blends local + edge selection weights when both are available. KV unreachable → graceful fallback to local.
 
 See [.env.example](.env.example) for all variables with inline comments.
 

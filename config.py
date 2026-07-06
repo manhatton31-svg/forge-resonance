@@ -150,6 +150,13 @@ CLOUDFLARE_KV_TIMEOUT_SECONDS = float(os.getenv("CLOUDFLARE_KV_TIMEOUT", "10"))
 EDGE_REPUTATION_ENABLED = (
     os.getenv("EDGE_REPUTATION_ENABLED", "false").lower() == "true"
 )
+EdgeReadPreference = Literal["edge_first", "local_first", "local_only"]
+_EDGE_READ_RAW = os.getenv("EDGE_READ_PREFERENCE", "edge_first").lower()
+EDGE_READ_PREFERENCE: EdgeReadPreference = (
+    _EDGE_READ_RAW
+    if _EDGE_READ_RAW in ("edge_first", "local_first", "local_only")
+    else "edge_first"
+)
 
 
 @dataclass(frozen=True)
@@ -162,6 +169,7 @@ class EdgeReputationConfig:
     namespace_id: str = CLOUDFLARE_KV_NAMESPACE
     key_prefix: str = CLOUDFLARE_KV_KEY_PREFIX
     timeout_seconds: float = CLOUDFLARE_KV_TIMEOUT_SECONDS
+    read_preference: EdgeReadPreference = EDGE_READ_PREFERENCE
 
     @property
     def is_configured(self) -> bool:
@@ -183,6 +191,7 @@ def load_edge_reputation_config() -> EdgeReputationConfig:
         namespace_id=CLOUDFLARE_KV_NAMESPACE or CF_REPUTATION_KV_NAMESPACE,
         key_prefix=CLOUDFLARE_KV_KEY_PREFIX,
         timeout_seconds=CLOUDFLARE_KV_TIMEOUT_SECONDS,
+        read_preference=EDGE_READ_PREFERENCE,
     )
 
 # ---------------------------------------------------------------------------

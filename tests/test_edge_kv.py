@@ -15,6 +15,7 @@ from config import EdgeReputationConfig
 from core.scoring import InMemoryScoreStore, OutcomeTier, ResonanceScorer
 from reputation.edge_kv import CloudflareKVClient, EdgeReputationRecord
 from reputation.score_layer import (
+    DRIFT_REPORT_THRESHOLD,
     InMemoryOutcomeHistoryStore,
     ResonanceScoreManager,
     ReputationLayer,
@@ -197,6 +198,78 @@ class TestScoreManagerEdgeIntegration:
     ):
         kv_client.sync_score("vis-agent", 50.0, 1.05)
         assert manager.get_visibility_from_edge("vis-agent") == pytest.approx(1.05)
+
+
+class TestEdgeAwareRanking:
+    @pytest.fixture
+    def layer(self, kv_client: CloudflareKVClient) -> ReputationLayer:
+        scorer = ResonanceScorer(InMemoryScoreStore())
+        manager = ResonanceScoreManager(
+            scorer=scorer,
+            history_store=InMemoryOutcomeHistoryStore(),
+            edge_kv=kv_client,
+        )
+        return ReputationLayer(manager)
+
+    def test_rank_uses_kv_when_local_cold(self, layer: ReputationLayer, kv_client: CloudflareKVClient):
+        kv_client.sync_score("edge-leader", 85.0, 1.7)
+        layer.score_manager.record_outcome("local-leader", OutcomeTier.SUCCESS, quality=0.9)
+        ranked = layer.rank_agents(
+            ["local-leader", "edge-leader"],
+            use_edge_data=True,
+        )
+        assert ranked[0].agent_id == "edge-leader"
+        assert ranked[0].score_source in ("edge", "edge_fallback")
+        assert ranked[0].resonance_score == pytest.approx(85.0)
+
+    def test_rank_blends_when_both_sources_exist(
+        self, layer: ReputationLayer, kv_client: CloudflareKVClient
+    ):
+        layer.score_manager.record_outcome("blend-agent", OutcomeTier.SUCCESS, quality=0.9)
+        local_score = layer.score_manager.get_score("blend-agent")
+        kv_client.sync_score("blend-agent", 90.0, 1.8)
+        metrics = layer.score_manager.resolve_ranking_metrics("blend-agent")
+        assert metrics.source == "blended"
+        assert metrics.score == pytest.approx((local_score + 90.0) / 2.0)
+        assert metrics.selection_weight > 0
+
+    def test_rank_falls_back_to_local_when_kv_unreachable(
+        self, layer: ReputationLayer, mock_store: MockKVStore, kv_client: CloudflareKVClient
+    ):
+        layer.score_manager.record_outcome("fallback-agent", OutcomeTier.SUCCESS, quality=0.8)
+        local_score = layer.score_manager.get_score("fallback-agent")
+        mock_store.fail_next = True
+        ranked = layer.rank_agents(["fallback-agent"], use_edge_data=True)
+        assert ranked[0].resonance_score == pytest.approx(local_score)
+        assert ranked[0].score_source == "local"
+
+    def test_use_edge_data_false_ignores_kv(
+        self, layer: ReputationLayer, kv_client: CloudflareKVClient
+    ):
+        kv_client.sync_score("ignored", 95.0, 1.9)
+        ranked = layer.rank_agents(["ignored"], use_edge_data=False)
+        assert ranked[0].resonance_score == pytest.approx(50.0)
+        assert ranked[0].score_source == "local"
+
+    def test_sync_status_reports_drift(
+        self, layer: ReputationLayer, kv_client: CloudflareKVClient
+    ):
+        layer.score_manager.record_outcome("drift-agent", OutcomeTier.SUCCESS, quality=0.9)
+        kv_client.sync_score("drift-agent", 90.0, 1.8)
+        status = layer.sync_status(["drift-agent"])
+        assert status["edge_reachable"] is True
+        assert status["agents_with_edge_data"] == 1
+        assert status["agents_with_drift"] >= 1
+        assert status["max_drift"] >= DRIFT_REPORT_THRESHOLD
+
+    def test_fabric_health_includes_sync_fields(
+        self, layer: ReputationLayer, kv_client: CloudflareKVClient
+    ):
+        kv_client.sync_score("health-agent", 70.0, 1.4)
+        health = layer.fabric_health(["health-agent"])
+        assert health["edge_reachable"] is True
+        assert "read_preference" in health
+        assert "edge_max_drift" in health
 
 
 class TestReputationLayerEdge:

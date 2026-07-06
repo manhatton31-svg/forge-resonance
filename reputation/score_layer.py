@@ -19,11 +19,14 @@ from typing import Any
 
 from config import (
     DATABASE_URL,
+    EDGE_READ_PREFERENCE,
     EDGE_REPUTATION_ENABLED,
+    EdgeReadPreference,
     RESONANCE_SCORE_DEFAULT,
     SQLITE_PATH,
     load_edge_reputation_config,
 )
+from reputation.edge_kv import CloudflareKVClient, EdgeReputationRecord, create_edge_kv_client
 from core.scoring import (
     InMemoryScoreStore,
     OutcomeTier,
@@ -32,13 +35,13 @@ from core.scoring import (
     SqliteScoreStore,
     create_scorer,
 )
-from reputation.edge_kv import CloudflareKVClient, create_edge_kv_client
 from reputation.multiplier import get_visibility_multiplier
 from utils.logging import setup_logging
 
 logger = setup_logging("forge.reputation")
 
 SUCCESS_OUTCOMES = frozenset({"success", "partial"})
+DRIFT_REPORT_THRESHOLD = 0.5
 
 
 class TrendDirection(str, Enum):
@@ -107,19 +110,55 @@ class AgentReputation:
     trend_direction: str = TrendDirection.INSUFFICIENT_DATA.value
     rank: int = 0
     selection_weight: float = 0.0
+    score_source: str = "local"
 
     @staticmethod
     def compute_selection_weight(
         resonance_score: float,
         visibility_multiplier: float,
+        *,
+        local_score: float | None = None,
+        local_visibility: float | None = None,
+        edge_score: float | None = None,
+        edge_visibility: float | None = None,
+        blend_dual_source: bool = False,
     ) -> float:
         """
         Composite weight for swarm selection.
 
         visibility × normalized score — higher values surface more often
         when the Fabric routes intent across many agents.
+
+        When ``blend_dual_source`` is True and both local and edge metrics are
+        provided, returns the average of the two weights.
         """
+        if blend_dual_source and (
+            local_score is not None
+            and local_visibility is not None
+            and edge_score is not None
+            and edge_visibility is not None
+        ):
+            local_weight = local_visibility * (local_score / 100.0)
+            edge_weight = edge_visibility * (edge_score / 100.0)
+            return (local_weight + edge_weight) / 2.0
         return visibility_multiplier * (resonance_score / 100.0)
+
+
+@dataclass
+class ResolvedRankingMetrics:
+    """Score and visibility resolved for ranking / selection."""
+
+    agent_id: str
+    score: float
+    visibility_multiplier: float
+    selection_weight: float
+    source: str
+    local_score: float
+    local_visibility: float
+    edge_score: float | None = None
+    edge_visibility: float | None = None
+    score_drift: float | None = None
+    edge_synced_at: str | None = None
 
 
 class OutcomeHistoryStore(ABC):
@@ -511,6 +550,126 @@ class ResonanceScoreManager:
         records = self._history.list_for_agent(agent_id, limit=window)
         return compute_trend(records, window=window)
 
+    def resolve_ranking_metrics(
+        self,
+        agent_id: str,
+        *,
+        use_edge_data: bool = True,
+        read_preference: EdgeReadPreference | None = None,
+    ) -> ResolvedRankingMetrics:
+        """
+        Resolve score and visibility for ranking using hybrid local + edge data.
+
+        Read preference (``EDGE_READ_PREFERENCE``):
+        - ``edge_first``: KV when available, else local; blend when both exist
+        - ``local_first``: local when warm, else KV; blend when both exist
+        - ``local_only``: ignore KV for reads
+        """
+        preference = read_preference or EDGE_READ_PREFERENCE
+        local_score = self.get_score(agent_id)
+        local_visibility = get_visibility_multiplier(local_score)
+        local_warm = self._has_local_warmth(agent_id)
+
+        edge_record: EdgeReputationRecord | None = None
+        if (
+            use_edge_data
+            and preference != "local_only"
+            and self._edge_kv
+            and self._edge_kv.enabled
+        ):
+            try:
+                edge_record = self._edge_kv.get_record(agent_id)
+            except Exception as exc:
+                logger.warning(
+                    "Edge KV read failed for agent=%s: %s — using local",
+                    agent_id,
+                    exc,
+                )
+
+        edge_score = edge_record.score if edge_record else None
+        edge_visibility = (
+            edge_record.visibility_multiplier if edge_record else None
+        )
+        edge_synced_at = edge_record.synced_at if edge_record else None
+
+        has_edge = edge_score is not None and edge_visibility is not None
+        has_both = local_warm and has_edge
+
+        if preference == "local_only" or not use_edge_data or not has_edge:
+            score, visibility, source = local_score, local_visibility, "local"
+            blend = False
+        elif has_both:
+            score = (local_score + edge_score) / 2.0  # type: ignore[operator]
+            visibility = (local_visibility + edge_visibility) / 2.0  # type: ignore[operator]
+            source = "blended"
+            blend = True
+        elif preference == "edge_first" and has_edge:
+            score = edge_score  # type: ignore[assignment]
+            visibility = edge_visibility  # type: ignore[assignment]
+            source = "edge"
+            blend = False
+        elif preference == "local_first" and local_warm:
+            score, visibility, source = local_score, local_visibility, "local"
+            blend = False
+        elif has_edge:
+            score = edge_score  # type: ignore[assignment]
+            visibility = edge_visibility  # type: ignore[assignment]
+            source = "edge_fallback"
+            blend = False
+        else:
+            score, visibility, source = local_score, local_visibility, "local"
+            blend = False
+
+        drift = (
+            abs(local_score - edge_score)
+            if has_edge and edge_score is not None
+            else None
+        )
+
+        weight = AgentReputation.compute_selection_weight(
+            score,
+            visibility,
+            local_score=local_score,
+            local_visibility=local_visibility,
+            edge_score=edge_score,
+            edge_visibility=edge_visibility,
+            blend_dual_source=blend,
+        )
+
+        if source in ("edge", "edge_fallback", "blended"):
+            logger.info(
+                "Ranking metrics agent=%s source=%s score=%.2f visibility=%.2f "
+                "weight=%.3f local=%.2f edge=%s",
+                agent_id,
+                source,
+                score,
+                visibility,
+                weight,
+                local_score,
+                f"{edge_score:.2f}" if edge_score is not None else "n/a",
+            )
+        else:
+            logger.debug(
+                "Ranking metrics agent=%s source=local score=%.2f weight=%.3f",
+                agent_id,
+                score,
+                weight,
+            )
+
+        return ResolvedRankingMetrics(
+            agent_id=agent_id,
+            score=score,
+            visibility_multiplier=visibility,
+            selection_weight=weight,
+            source=source,
+            local_score=local_score,
+            local_visibility=local_visibility,
+            edge_score=edge_score,
+            edge_visibility=edge_visibility,
+            score_drift=drift,
+            edge_synced_at=edge_synced_at,
+        )
+
     def get_analytics(self, agent_id: str, *, window: int = 50) -> AgentAnalytics:
         """Full analytics snapshot for an agent."""
         records = self._history.list_for_agent(agent_id, limit=window)
@@ -596,9 +755,14 @@ class ReputationLayer:
         agent_names: dict[str, str] | None = None,
         min_visibility: float = 0.0,
         sort_by: str = "composite",
+        use_edge_data: bool = True,
     ) -> list[AgentReputation]:
         """
         Rank agents for Fabric matching and swarm routing.
+
+        When ``EDGE_REPUTATION_ENABLED`` and ``use_edge_data=True``, scores and
+        visibility multipliers are resolved via ``resolve_ranking_metrics()`` using
+        ``EDGE_READ_PREFERENCE`` (default: edge_first with blended dual-source).
 
         Sort modes:
         - ``composite`` (default): selection_weight = visibility × score/100
@@ -609,13 +773,37 @@ class ReputationLayer:
         1-indexed on returned snapshots.
         """
         names = agent_names or {}
+        edge_active = (
+            use_edge_data
+            and self._manager.edge_kv is not None
+            and self._manager.edge_kv.enabled
+        )
         reputations: list[AgentReputation] = []
         for aid in agent_ids:
-            rep = self.get_reputation(aid, agent_name=names.get(aid, ""))
-            rep.selection_weight = AgentReputation.compute_selection_weight(
-                rep.resonance_score,
-                rep.visibility_multiplier,
-            )
+            if edge_active:
+                metrics = self._manager.resolve_ranking_metrics(
+                    aid, use_edge_data=True
+                )
+                records = self._manager.history_store.list_for_agent(aid, limit=50)
+                rep = AgentReputation(
+                    agent_id=aid,
+                    agent_name=names.get(aid, ""),
+                    resonance_score=metrics.score,
+                    visibility_multiplier=metrics.visibility_multiplier,
+                    total_resonances=len(records),
+                    success_rate=compute_success_rate(records),
+                    average_quality=compute_average_quality(records),
+                    trend_direction=compute_trend(records, window=10).direction.value,
+                    selection_weight=metrics.selection_weight,
+                    score_source=metrics.source,
+                )
+            else:
+                rep = self.get_reputation(aid, agent_name=names.get(aid, ""))
+                rep.selection_weight = AgentReputation.compute_selection_weight(
+                    rep.resonance_score,
+                    rep.visibility_multiplier,
+                )
+                rep.score_source = "local"
             reputations.append(rep)
 
         eligible = [
@@ -665,22 +853,84 @@ class ReputationLayer:
             metadata={"reason": update.reason, "outcome": update.outcome.value},
         )
 
-    def fabric_health(self) -> dict[str, Any]:
-        """Return aggregate Fabric health metrics."""
-        store_type = type(self._manager.scorer.store).__name__
-        history_type = type(self._manager.history_store).__name__
+    def sync_status(
+        self,
+        agent_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Lightweight edge sync observability: reachability, drift, last sync times.
+        """
         edge = self._manager.edge_kv
         edge_cfg = edge.config if edge else self._edge_config
         edge_enabled = bool(edge and edge.enabled)
         edge_reachable = edge.ping() if edge_enabled else False
+
+        status: dict[str, Any] = {
+            "edge_reputation_enabled": edge_cfg.enabled,
+            "edge_sync": edge_enabled,
+            "edge_reachable": edge_reachable,
+            "read_preference": edge_cfg.read_preference,
+            "last_reachable_check": edge.last_reachable_check if edge else None,
+            "agents_checked": 0,
+            "agents_with_edge_data": 0,
+            "agents_with_drift": 0,
+            "max_drift": 0.0,
+            "last_sync_times": {},
+            "drift_details": [],
+        }
+
+        if not agent_ids:
+            return status
+
+        status["agents_checked"] = len(agent_ids)
+        for aid in agent_ids:
+            local_score = self._manager.get_score(aid)
+            edge_record = edge.get_record(aid) if edge_enabled and edge else None
+            if edge_record:
+                status["agents_with_edge_data"] += 1
+                synced_at = (
+                    edge.get_last_sync_time(aid) or edge_record.synced_at
+                )
+                status["last_sync_times"][aid] = synced_at
+                drift = abs(local_score - edge_record.score)
+                if drift >= DRIFT_REPORT_THRESHOLD:
+                    status["agents_with_drift"] += 1
+                    status["drift_details"].append({
+                        "agent_id": aid,
+                        "local_score": local_score,
+                        "edge_score": edge_record.score,
+                        "drift": drift,
+                        "edge_synced_at": edge_record.synced_at,
+                    })
+                    status["max_drift"] = max(status["max_drift"], drift)
+
+        return status
+
+    def fabric_health(
+        self,
+        agent_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return aggregate Fabric health metrics including edge sync status."""
+        store_type = type(self._manager.scorer.store).__name__
+        history_type = type(self._manager.history_store).__name__
+        sync = self.sync_status(agent_ids)
         return {
             "storage": "neon" if "Neon" in store_type else "sqlite" if "Sqlite" in store_type else "local",
             "score_store": store_type,
             "history_store": history_type,
-            "edge_reputation_enabled": edge_cfg.enabled,
-            "edge_sync": edge_enabled,
-            "edge_reachable": edge_reachable,
-            "edge_namespace": edge_cfg.namespace_id or None,
+            "edge_reputation_enabled": sync["edge_reputation_enabled"],
+            "edge_sync": sync["edge_sync"],
+            "edge_reachable": sync["edge_reachable"],
+            "edge_namespace": (
+                self._manager.edge_kv.config.namespace_id
+                if self._manager.edge_kv and self._manager.edge_kv.enabled
+                else self._edge_config.namespace_id or None
+            ),
+            "read_preference": sync["read_preference"],
+            "last_reachable_check": sync["last_reachable_check"],
+            "edge_agents_with_data": sync["agents_with_edge_data"],
+            "edge_score_drift_count": sync["agents_with_drift"],
+            "edge_max_drift": sync["max_drift"],
             "score_range": [0.0, 100.0],
             "visibility_range": [0.1, 2.0],
         }

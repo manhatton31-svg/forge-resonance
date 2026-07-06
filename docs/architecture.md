@@ -154,6 +154,23 @@ record_outcome() → Neon/SQLite (source of truth)
 | Neon / SQLite | Authoritative scores, ledger, outcome history |
 | Cloudflare KV | Fast edge cache for `rank_agents()` and swarm routers |
 | `resolve_score()` | Local score when warm; KV fallback when local is cold |
+| `resolve_ranking_metrics()` | Active read path for ranking and selection weight |
+
+**Edge-aware ranking** (`ReputationLayer.rank_agents(use_edge_data=True)`):
+
+```
+EDGE_READ_PREFERENCE=edge_first (default)
+        │
+        ├── KV record exists + local warm → blended score/visibility/weight
+        ├── KV only (local cold)        → edge metrics (edge_fallback)
+        └── KV missing / unreachable    → local metrics (graceful degrade)
+```
+
+Selection weight blends local and edge weights when both sources exist:
+`(local_visibility × local_score/100 + edge_visibility × edge_score/100) / 2`.
+
+Observability: `sync_status(agent_ids)` reports KV reachability, last sync times,
+and score drift between local and edge. `fabric_health()` includes aggregate drift.
 
 Enable with `EDGE_REPUTATION_ENABLED=true` plus `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_KV_NAMESPACE`. Sync failures are logged and never block local persistence.
 

@@ -80,6 +80,9 @@ class CloudflareKVClient:
     ) -> None:
         self._config = config or load_edge_reputation_config()
         self._request_fn = request_fn or _default_http_request
+        self._last_sync_at: dict[str, str] = {}
+        self._last_reachable_check: str | None = None
+        self._last_reachable: bool | None = None
 
     @property
     def config(self) -> EdgeReputationConfig:
@@ -201,6 +204,8 @@ class CloudflareKVClient:
             )
             return False
 
+        synced_at = record.synced_at
+        self._last_sync_at[agent_id] = synced_at
         logger.info(
             "Edge KV synced: agent=%s score=%.2f visibility=%.2f",
             agent_id,
@@ -209,9 +214,14 @@ class CloudflareKVClient:
         )
         return True
 
+    def get_last_sync_time(self, agent_id: str) -> str | None:
+        """Return ISO timestamp of last successful sync for an agent."""
+        return self._last_sync_at.get(agent_id)
+
     def ping(self) -> bool:
         """Lightweight reachability check (namespace metadata GET)."""
         if not self.enabled:
+            self._last_reachable = False
             return False
         url = (
             f"{CLOUDFLARE_API_BASE}/accounts/{self._config.account_id}"
@@ -224,9 +234,16 @@ class CloudflareKVClient:
                 headers=self._headers(),
                 timeout=self._config.timeout_seconds,
             )
-            return 200 <= status < 300
+            reachable = 200 <= status < 300
         except (HTTPError, URLError, TimeoutError, OSError):
-            return False
+            reachable = False
+        self._last_reachable = reachable
+        self._last_reachable_check = datetime.now(timezone.utc).isoformat()
+        return reachable
+
+    @property
+    def last_reachable_check(self) -> str | None:
+        return self._last_reachable_check
 
 
 def _default_http_request(
