@@ -47,14 +47,34 @@ The foundational primitive. Each agent:
 
 ### 2. Intent Signal Harvesting (`harvesting/`)
 
-Privacy-preserving local intent detection:
+Privacy-preserving local intent detection via `EmbeddingIntentHarvester`:
 
-- Opt-in gate before any harvesting
-- Local embedding processing
-- Anonymized `IntentSignal` with SHA-256 hash
-- Firecrawl hook for opt-in web enrichment (future)
+**How intent enters the Fabric:**
 
-**Privacy boundary:** Raw signals never cross the local processing boundary.
+```
+External source                Harvester                     Agent loop
+───────────────               ─────────────                 ──────────
+ingest_text()        ──►  detect_intent()  ──►  queue signal  ──►  harvest()
+ingest_from_chat()   ──►  keyword+embedding match              should_resonate()
+ingest_from_webhook()──►  multi-turn context boost             run_once()
+       │                      │
+       └── URL in text ──► FirecrawlEnricher (opt-in)
+```
+
+**Intent patterns:** purchase, research, comparison, problem_solving, support, evaluation — each with keywords, examples, and centroid embeddings.
+
+**Confidence scoring:** keyword hits (45%) + embedding similarity (55%) + multi-turn boost + Firecrawl enrichment bonus. Signals below `INTENT_RESONANCE_THRESHOLD` are skipped.
+
+**Ingestion APIs:**
+- `ingest_text(text)` — raw text from any source
+- `ingest_from_chat({"text", "role", "metadata"})` — chat messages
+- `ingest_from_webhook({"source", "text", "url", "metadata"})` — external webhooks
+
+**Multi-turn context:** Recent signals stored in `recent_intent_signals` working memory for disambiguation across turns.
+
+**Firecrawl enrichment:** When `FIRECRAWL_ENABLED=true`, URLs in text are scraped via Firecrawl REST API (same backend as MCP `firecrawl_scrape`). Only anonymized summary hashes enter the signal context.
+
+**Privacy boundary:** Raw text is hashed locally; only `IntentSignal` context vectors propagate downstream.
 
 ### 3. Resonance Matching & Generation (`generation/`)
 

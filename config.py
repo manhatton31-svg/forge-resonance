@@ -96,6 +96,11 @@ CF_REPUTATION_KV_NAMESPACE = os.getenv("CF_REPUTATION_KV_NAMESPACE", "")
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY", "")
 FIRECRAWL_ENABLED = os.getenv("FIRECRAWL_ENABLED", "false").lower() == "true"
 
+# Intent harvesting thresholds
+INTENT_RESONANCE_THRESHOLD = float(os.getenv("INTENT_RESONANCE_THRESHOLD", "0.35"))
+INTENT_SIMILARITY_THRESHOLD = float(os.getenv("INTENT_SIMILARITY_THRESHOLD", "0.55"))
+INTENT_MULTI_TURN_LIMIT = int(os.getenv("INTENT_MULTI_TURN_LIMIT", "5"))
+
 # ---------------------------------------------------------------------------
 # Agent runtime
 # ---------------------------------------------------------------------------

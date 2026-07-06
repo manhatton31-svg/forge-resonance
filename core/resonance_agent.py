@@ -351,6 +351,18 @@ class ResonanceAgent:
                 self._state_manager.save(self._state)
                 return ResonanceOutcome.SKIPPED
 
+            if hasattr(self._harvester, "should_resonate"):
+                if not self._harvester.should_resonate(signal):  # type: ignore[union-attr]
+                    logger.info(
+                        "Cycle #%d: signal below resonance threshold "
+                        "(confidence=%.2f)",
+                        self._state.loop_count,
+                        signal.confidence,
+                    )
+                    self._state.transition(AgentLifecycle.IDLE)
+                    self._state_manager.save(self._state)
+                    return ResonanceOutcome.SKIPPED
+
             logger.info(
                 "Cycle #%d: intent sensed hash=%s confidence=%.2f",
                 self._state.loop_count,
@@ -472,12 +484,36 @@ class ResonanceAgent:
             self._memory.goals.append(goal)
             self._memory_store.save(self._memory)
 
-    def submit_intent(self, text: str) -> None:
-        """Queue a text intent for the next harvest cycle."""
-        from harvesting.intent_harvester import EmbeddingIntentHarvester
+    def submit_intent(self, text: str) -> IntentSignal | None:
+        """Detect and queue a text intent for the next harvest cycle."""
+        harvester = self._harvester
+        if hasattr(harvester, "ingest_text"):
+            signal = harvester.ingest_text(self._memory, text)  # type: ignore[union-attr]
+        else:
+            from harvesting.intent_harvester import EmbeddingIntentHarvester
 
-        EmbeddingIntentHarvester.queue_intent_text(self._memory, text)
+            EmbeddingIntentHarvester.queue_intent_text(self._memory, text)
+            signal = None
         self._memory_store.save(self._memory)
+        return signal
+
+    def ingest_chat(self, message: dict[str, Any]) -> IntentSignal | None:
+        """Ingest intent from a chat message dict."""
+        if hasattr(self._harvester, "ingest_from_chat"):
+            signal = self._harvester.ingest_from_chat(self._memory, message)  # type: ignore[union-attr]
+            self._memory_store.save(self._memory)
+            return signal
+        text = message.get("text", "")
+        return self.submit_intent(str(text)) if text else None
+
+    def ingest_webhook(self, payload: dict[str, Any]) -> IntentSignal | None:
+        """Ingest intent from a webhook payload."""
+        if hasattr(self._harvester, "ingest_from_webhook"):
+            signal = self._harvester.ingest_from_webhook(self._memory, payload)  # type: ignore[union-attr]
+            self._memory_store.save(self._memory)
+            return signal
+        text = payload.get("text", "")
+        return self.submit_intent(str(text)) if text else None
 
     def submit_mock_signal(
         self, context: dict[str, Any], *, confidence: float = 0.75
@@ -494,9 +530,13 @@ class ResonanceAgent:
 
     def _clear_consumed_intent(self) -> None:
         """Remove one-shot intent sources after harvest."""
-        from harvesting.intent_harvester import PENDING_INTENT_KEY
+        from harvesting.intent_harvester import (
+            PENDING_DETECTED_SIGNAL_KEY,
+            PENDING_INTENT_KEY,
+        )
 
         self._memory.working.pop(PENDING_INTENT_KEY, None)
+        self._memory.working.pop(PENDING_DETECTED_SIGNAL_KEY, None)
         self._memory.metadata.pop("mock_signal", None)
 
     def _finalize(

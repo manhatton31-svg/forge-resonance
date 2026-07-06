@@ -162,7 +162,9 @@ class TestFullResonanceCycle:
         assert wired_agent.memory.episodic[-1].outcome == "success"
 
     def test_run_loop_single_iteration(self, wired_agent: ResonanceAgent):
-        wired_agent.submit_intent("research intent for project management")
+        wired_agent.submit_intent(
+            "I'm researching project management tools and need an overview"
+        )
         wired_agent.run_loop(max_iterations=1)
         assert wired_agent.state.lifecycle == AgentLifecycle.PAUSED
         assert len(wired_agent.memory.episodic) == 1
