@@ -17,7 +17,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from config import CF_REPUTATION_KV_NAMESPACE, DATABASE_URL, SQLITE_PATH
+from config import (
+    DATABASE_URL,
+    EDGE_REPUTATION_ENABLED,
+    RESONANCE_SCORE_DEFAULT,
+    SQLITE_PATH,
+    load_edge_reputation_config,
+)
 from core.scoring import (
     InMemoryScoreStore,
     OutcomeTier,
@@ -26,6 +32,7 @@ from core.scoring import (
     SqliteScoreStore,
     create_scorer,
 )
+from reputation.edge_kv import CloudflareKVClient, create_edge_kv_client
 from reputation.multiplier import get_visibility_multiplier
 from utils.logging import setup_logging
 
@@ -351,9 +358,11 @@ class ResonanceScoreManager:
         self,
         scorer: ResonanceScorer | None = None,
         history_store: OutcomeHistoryStore | None = None,
+        edge_kv: CloudflareKVClient | None = None,
     ) -> None:
         self._scorer = scorer or create_scorer()
         self._history = history_store or create_outcome_history_store()
+        self._edge_kv = edge_kv
 
     @property
     def scorer(self) -> ResonanceScorer:
@@ -363,8 +372,37 @@ class ResonanceScoreManager:
     def history_store(self) -> OutcomeHistoryStore:
         return self._history
 
+    @property
+    def edge_kv(self) -> CloudflareKVClient | None:
+        return self._edge_kv
+
     def get_score(self, agent_id: str) -> float:
         return self._scorer.get_score(agent_id)
+
+    def get_score_from_edge(self, agent_id: str) -> float | None:
+        """Read Resonance Score from Cloudflare KV (edge cache only)."""
+        if not self._edge_kv or not self._edge_kv.enabled:
+            return None
+        return self._edge_kv.get_score(agent_id)
+
+    def resolve_score(self, agent_id: str) -> float:
+        """
+        Resolve score from local store, falling back to KV when local is cold.
+
+        Local is considered cold when the agent has no outcome history and the
+        local score is still the default — typical for a new edge node.
+        """
+        local = self.get_score(agent_id)
+        if self._has_local_warmth(agent_id):
+            return local
+        edge_score = self.get_score_from_edge(agent_id)
+        if edge_score is not None:
+            return edge_score
+        return local
+
+    def _has_local_warmth(self, agent_id: str) -> bool:
+        """True when local DB has recorded outcomes for this agent."""
+        return bool(self._history.list_for_agent(agent_id, limit=1))
 
     def get_visibility_multiplier(
         self,
@@ -373,8 +411,41 @@ class ResonanceScoreManager:
         score: float | None = None,
     ) -> float:
         """Return visibility weight (0.1 – 2.0) for score-based distribution."""
-        resolved = score if score is not None else self.get_score(agent_id or "")
+        if score is not None:
+            resolved = score
+        elif agent_id:
+            resolved = self.resolve_score(agent_id)
+        else:
+            resolved = RESONANCE_SCORE_DEFAULT
         return get_visibility_multiplier(resolved)
+
+    def get_visibility_from_edge(self, agent_id: str) -> float | None:
+        """Read visibility multiplier from Cloudflare KV."""
+        if not self._edge_kv or not self._edge_kv.enabled:
+            return None
+        return self._edge_kv.get_visibility_multiplier(agent_id)
+
+    def _sync_to_edge(
+        self,
+        agent_id: str,
+        score: float,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Push score snapshot to KV; failures are logged, never raised."""
+        if not self._edge_kv or not self._edge_kv.enabled:
+            return
+        visibility = get_visibility_multiplier(score)
+        try:
+            self._edge_kv.sync_score(
+                agent_id,
+                score,
+                visibility,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Edge KV sync failed for agent=%s: %s", agent_id, exc
+            )
 
     def record_outcome(
         self,
@@ -429,6 +500,7 @@ class ResonanceScoreManager:
             metadata=meta,
         )
         self._history.record(record)
+        self._sync_to_edge(agent_id, update.new_score, meta)
         return update
 
     def get_success_rate(self, agent_id: str, *, window: int = 50) -> float:
@@ -467,14 +539,19 @@ class ResonanceScoreManager:
 def create_score_manager(
     scorer: ResonanceScorer | None = None,
     history_store: OutcomeHistoryStore | None = None,
+    edge_kv: CloudflareKVClient | None = None,
 ) -> ResonanceScoreManager:
     """Factory for ResonanceScoreManager with Neon → SQLite → in-memory chain."""
     resolved_scorer = scorer or create_scorer()
     if history_store is None and isinstance(resolved_scorer.store, InMemoryScoreStore):
         history_store = InMemoryOutcomeHistoryStore()
+    resolved_edge = edge_kv
+    if resolved_edge is None and EDGE_REPUTATION_ENABLED:
+        resolved_edge = create_edge_kv_client()
     return ResonanceScoreManager(
         scorer=resolved_scorer,
         history_store=history_store or create_outcome_history_store(),
+        edge_kv=resolved_edge,
     )
 
 
@@ -486,9 +563,13 @@ class ReputationLayer:
     Designed for replication to Cloudflare KV for decentralized edge lookups.
     """
 
-    def __init__(self, manager: ResonanceScoreManager | None = None) -> None:
-        self._manager = manager or create_score_manager()
-        self._cf_kv_namespace = CF_REPUTATION_KV_NAMESPACE
+    def __init__(
+        self,
+        manager: ResonanceScoreManager | None = None,
+        edge_kv: CloudflareKVClient | None = None,
+    ) -> None:
+        self._manager = manager or create_score_manager(edge_kv=edge_kv)
+        self._edge_config = load_edge_reputation_config()
 
     @property
     def score_manager(self) -> ResonanceScoreManager:
@@ -566,31 +647,40 @@ class ReputationLayer:
             rep.rank = position
         return ranked
 
-    def sync_to_edge(self, update: ScoreUpdate) -> None:
+    def sync_to_edge(self, update: ScoreUpdate) -> bool:
         """
         Push score update to Cloudflare KV for edge reputation cache.
 
-        Requires CF_REPUTATION_KV_NAMESPACE binding in production.
+        Returns ``True`` when KV write succeeds. Normally invoked automatically
+        by ``record_outcome``; exposed for manual/backfill sync.
         """
-        if not self._cf_kv_namespace:
-            logger.debug("Cloudflare KV not configured; edge sync skipped")
-            return
-        logger.info(
-            "Edge sync queued: agent=%s score=%.2f visibility=%.2f",
+        edge = self._manager.edge_kv
+        if not edge or not edge.enabled:
+            logger.debug("Edge KV not configured; edge sync skipped")
+            return False
+        return edge.sync_score(
             update.agent_id,
             update.new_score,
-            get_visibility_multiplier(update.new_score),
+            update.visibility_multiplier,
+            metadata={"reason": update.reason, "outcome": update.outcome.value},
         )
 
     def fabric_health(self) -> dict[str, Any]:
         """Return aggregate Fabric health metrics."""
         store_type = type(self._manager.scorer.store).__name__
         history_type = type(self._manager.history_store).__name__
+        edge = self._manager.edge_kv
+        edge_cfg = edge.config if edge else self._edge_config
+        edge_enabled = bool(edge and edge.enabled)
+        edge_reachable = edge.ping() if edge_enabled else False
         return {
             "storage": "neon" if "Neon" in store_type else "sqlite" if "Sqlite" in store_type else "local",
             "score_store": store_type,
             "history_store": history_type,
-            "edge_sync": bool(self._cf_kv_namespace),
+            "edge_reputation_enabled": edge_cfg.enabled,
+            "edge_sync": edge_enabled,
+            "edge_reachable": edge_reachable,
+            "edge_namespace": edge_cfg.namespace_id or None,
             "score_range": [0.0, 100.0],
             "visibility_range": [0.1, 2.0],
         }

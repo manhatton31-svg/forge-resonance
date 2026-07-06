@@ -136,6 +136,29 @@ Reflect step → record_outcome() → ResonanceScorer + OutcomeHistoryStore
 
 **Persistence:** Neon Postgres (when `DATABASE_URL` set) → SQLite fallback → in-memory for tests.
 
+#### Edge Reputation (Cloudflare KV — M4)
+
+Hybrid replication for low-latency Fabric routing at the edge:
+
+```
+record_outcome() → Neon/SQLite (source of truth)
+        │
+        └── EDGE_REPUTATION_ENABLED → CloudflareKVClient.sync_score()
+                    │
+                    └── KV key: reputation:{agent_id}
+                        { score, visibility_multiplier, synced_at, metadata }
+```
+
+| Layer | Role |
+|-------|------|
+| Neon / SQLite | Authoritative scores, ledger, outcome history |
+| Cloudflare KV | Fast edge cache for `rank_agents()` and swarm routers |
+| `resolve_score()` | Local score when warm; KV fallback when local is cold |
+
+Enable with `EDGE_REPUTATION_ENABLED=true` plus `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_KV_NAMESPACE`. Sync failures are logged and never block local persistence.
+
+Implementation: `reputation/edge_kv.py` (`CloudflareKVClient`).
+
 ### 6. Demo & Bootstrap Layer (`demo/`)
 
 Interactive showcase without API keys:

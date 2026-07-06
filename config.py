@@ -137,9 +137,53 @@ AXIOM_TOKEN = os.getenv("AXIOM_TOKEN", "")
 AXIOM_DATASET = os.getenv("AXIOM_DATASET", "forge-resonance")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# Cloudflare Workers binding names (future edge deployment)
+# Cloudflare edge reputation (M4 — KV replication layer)
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "")
 CF_REPUTATION_KV_NAMESPACE = os.getenv("CF_REPUTATION_KV_NAMESPACE", "")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", os.getenv("CF_API_TOKEN", ""))
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", CF_ACCOUNT_ID)
+CLOUDFLARE_KV_NAMESPACE = os.getenv(
+    "CLOUDFLARE_KV_NAMESPACE", CF_REPUTATION_KV_NAMESPACE
+)
+CLOUDFLARE_KV_KEY_PREFIX = os.getenv("CLOUDFLARE_KV_KEY_PREFIX", "reputation:")
+CLOUDFLARE_KV_TIMEOUT_SECONDS = float(os.getenv("CLOUDFLARE_KV_TIMEOUT", "10"))
+EDGE_REPUTATION_ENABLED = (
+    os.getenv("EDGE_REPUTATION_ENABLED", "false").lower() == "true"
+)
+
+
+@dataclass(frozen=True)
+class EdgeReputationConfig:
+    """Cloudflare KV edge reputation cache configuration."""
+
+    enabled: bool = EDGE_REPUTATION_ENABLED
+    api_token: str = CLOUDFLARE_API_TOKEN
+    account_id: str = CLOUDFLARE_ACCOUNT_ID
+    namespace_id: str = CLOUDFLARE_KV_NAMESPACE
+    key_prefix: str = CLOUDFLARE_KV_KEY_PREFIX
+    timeout_seconds: float = CLOUDFLARE_KV_TIMEOUT_SECONDS
+
+    @property
+    def is_configured(self) -> bool:
+        """True when edge sync is enabled and all required credentials are set."""
+        return bool(
+            self.enabled
+            and self.api_token
+            and self.account_id
+            and self.namespace_id
+        )
+
+
+def load_edge_reputation_config() -> EdgeReputationConfig:
+    """Load edge reputation settings from environment."""
+    return EdgeReputationConfig(
+        enabled=EDGE_REPUTATION_ENABLED,
+        api_token=CLOUDFLARE_API_TOKEN,
+        account_id=CLOUDFLARE_ACCOUNT_ID or CF_ACCOUNT_ID,
+        namespace_id=CLOUDFLARE_KV_NAMESPACE or CF_REPUTATION_KV_NAMESPACE,
+        key_prefix=CLOUDFLARE_KV_KEY_PREFIX,
+        timeout_seconds=CLOUDFLARE_KV_TIMEOUT_SECONDS,
+    )
 
 # ---------------------------------------------------------------------------
 # Firecrawl (future intent enrichment)
@@ -180,6 +224,7 @@ class ForgeConfig:
     arcly_timeout_seconds: int = ARCLY_HANDOFF_TIMEOUT_SECONDS
     log_level: str = LOG_LEVEL
     resonance_score_default: float = RESONANCE_SCORE_DEFAULT
+    edge_reputation_enabled: bool = EDGE_REPUTATION_ENABLED
 
     def ensure_directories(self) -> None:
         """Create on-disk data directories if they do not exist."""

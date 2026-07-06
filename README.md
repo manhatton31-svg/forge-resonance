@@ -210,6 +210,19 @@ ARCLY_MODE=live
 ARCLY_FEEDBACK_ENABLED=true
 ```
 
+### Edge Reputation (Cloudflare KV — optional, M4)
+
+Replicate scores and visibility multipliers to Cloudflare KV for fast edge lookups. Neon/SQLite remain the source of truth.
+
+```bash
+EDGE_REPUTATION_ENABLED=true
+CLOUDFLARE_API_TOKEN=your-api-token
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_KV_NAMESPACE=your-kv-namespace-id
+```
+
+Scores sync automatically after each `record_outcome()`. Use `resolve_score()` for KV fallback when local state is cold.
+
 See [.env.example](.env.example) for all variables with inline comments.
 
 ---
@@ -256,7 +269,7 @@ forge-resonance/
 | **M1** Foundation | Complete | Agent lifecycle, memory backends, scoring, Arcly contract |
 | **M2** Intent Harvesting | Complete | Embedding harvester, multi-turn context, Firecrawl hook |
 | **M3** Resonance Engine | Complete | Grok prompts, template fallback, quality estimation |
-| **M4** Fabric & Edge | Next | Cloudflare Workers, KV reputation cache, swarm routing |
+| **M4** Fabric & Edge | In Progress | KV edge reputation (initial), Workers, swarm routing |
 | **M5** Production Launch | Planned | Operator dashboard, full observability pipeline |
 
 Details: [docs/roadmap.md](docs/roadmap.md)

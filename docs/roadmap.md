@@ -11,7 +11,7 @@ Last updated: July 2026
 | M1 Foundation | **Complete** | Agent runtime, memory, scoring, Arcly contract |
 | M2 Intent Harvesting | **Complete** | Embedding harvester, multi-turn, Firecrawl hook |
 | M3 Resonance Engine | **Complete** | Grok prompts, templates, injection, reputation layer |
-| M4 Fabric & Edge | **Next** | Cloudflare Workers, KV reputation, swarm routing |
+| M4 Fabric & Edge | **In Progress** | KV reputation (initial), Workers, swarm routing |
 | M5 Production Launch | Planned | Dashboard, full observability, operator tooling |
 
 ---
@@ -71,12 +71,18 @@ Last updated: July 2026
 
 ---
 
-## M4: Fabric & Edge — Next (Q3–Q4 2026)
+## M4: Fabric & Edge — In Progress (Q3–Q4 2026)
 
-Priority work for public-scale deployment:
+| Deliverable | Status |
+|-------------|--------|
+| `CloudflareKVClient` (`reputation/edge_kv.py`) | Done |
+| Edge sync after `record_outcome()` | Done |
+| `resolve_score()` KV cold-read fallback | Done |
+| `EDGE_REPUTATION_ENABLED` config flag | Done |
+
+Remaining:
 
 - [ ] Cloudflare Workers deployment for edge agents
-- [ ] KV-backed reputation cache with Neon sync
 - [ ] Fabric router: weighted random selection via `selection_weight`
 - [ ] Multi-agent collaboration protocol
 - [ ] Fabric-wide health dashboard (Axiom)
@@ -115,9 +121,9 @@ Priority work for public-scale deployment:
 
 ## Immediate Next Steps
 
-1. **Documentation polish** — README, getting-started, demo UX (this release)
-2. **Edge prototype** — single Worker agent + KV reputation read
-3. **Swarm router** — weighted selection over `rank_agents()` output
+1. **Edge Workers prototype** — single Worker agent + KV reputation read at edge
+2. **Swarm router** — weighted selection over `rank_agents()` output
+3. **KV backfill job** — bulk sync from Neon to KV for existing agents
 4. **Operator API** — `/api/agents` CRUD on Vercel
 
 See [getting-started.md](getting-started.md) to run what exists today.
