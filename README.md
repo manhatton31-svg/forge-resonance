@@ -249,7 +249,7 @@ See [.env.example](.env.example) for all variables with inline comments.
 
 ```python
 from core.resonance_agent import IntentSignal
-from fabric.swarm import SwarmCoordinator, SwarmStrategy
+from fabric.swarm import ConsensusStrategy, SwarmCoordinator, SwarmStrategy
 
 signal = IntentSignal.from_context(
     {"matched_intent": "purchase_intent", "text": "I want analytics pricing"},
@@ -259,18 +259,29 @@ signal = IntentSignal.from_context(
 swarm = SwarmCoordinator(registry, reputation_layer)
 swarm.bind_agents([atlas_agent, nova_agent, echo_agent])
 
-# Best single agent runs one cycle
+# Best single agent runs one cycle (120s default timeout from SWARM_AGENT_TIMEOUT)
 result = swarm.execute(signal, strategy=SwarmStrategy.BEST_SINGLE)
-print(result.best_result.agent_name, result.swarm_quality)
+if result.best_result:
+    print(result.best_result.agent_name, result.swarm_quality)
+else:
+    print("All agents failed:", result.metrics.failure_count)
 
-# Broadcast to top 3 and aggregate consensus
+# Broadcast to top 3 with quality-weighted consensus
 broadcast = swarm.execute(
     signal,
     strategy=SwarmStrategy.BROADCAST_TOP_N,
     top_n=3,
+    consensus_strategy=ConsensusStrategy.QUALITY_WEIGHTED,
 )
-print(broadcast.consensus_outcome, broadcast.success_count)
+print(broadcast.consensus_outcome, broadcast.metrics.success_rate)
+
+# Inspect per-agent failures without crashing the swarm
+for agent_result in broadcast.agent_results:
+    if agent_result.failure_kind:
+        print(agent_result.agent_name, agent_result.failure_kind, agent_result.error)
 ```
+
+**Swarm env vars:** `SWARM_AGENT_TIMEOUT`, `SWARM_MAX_PARALLEL`, `SWARM_CONSENSUS_STRATEGY` — see `.env.example`.
 
 ---
 

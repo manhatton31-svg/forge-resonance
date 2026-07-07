@@ -500,8 +500,13 @@ def _print_swarm_execution(
             else "unknown"
         )
         err = f"  error={agent_result.error}" if agent_result.error else ""
+        kind = (
+            f" [{agent_result.failure_kind.value}]"
+            if agent_result.failure_kind
+            else ""
+        )
         print_fn(
-            f"  • {agent_result.agent_name}: {status}  "
+            f"  • {agent_result.agent_name}: {status}{kind}  "
             f"(quality={agent_result.quality:.2f}, "
             f"score={agent_result.score_after:.1f}, "
             f"{agent_result.duration_ms:.0f}ms){err}"
@@ -519,6 +524,14 @@ def _print_swarm_execution(
         print_fn(
             f"  Swarm quality={result.swarm_quality:.2f}  "
             f"confidence={result.swarm_confidence:.2f}"
+        )
+    if result.metrics is not None:
+        m = result.metrics
+        print_fn(
+            f"  Metrics: {m.success_rate:.0%} success, "
+            f"{m.failure_count} failures ({m.timeout_count} timeouts), "
+            f"avg_quality={m.average_quality:.2f}, "
+            f"duration={m.total_duration_ms:.0f}ms"
         )
 
 

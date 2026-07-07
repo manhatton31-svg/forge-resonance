@@ -5,16 +5,19 @@ Swarm Coordinator — multi-agent intent routing, execution, and aggregation.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Sequence, TYPE_CHECKING
 
 from agents.registry import AgentRegistry
+from config import SwarmExecutionConfig, load_swarm_config
 from core.resonance_agent import IntentSignal, ResonanceAgent, ResonanceOutcome
 from core.scoring import OutcomeTier
 from fabric.router import IntentRouter, RoutingAssignment
 from reputation.score_layer import ReputationLayer
-from utils.logging import setup_logging
+from utils.logging import emit_axiom_event, setup_logging
 
 if TYPE_CHECKING:
     from reputation.score_layer import ResonanceScoreManager
@@ -27,6 +30,21 @@ class SwarmStrategy(str, Enum):
 
     BEST_SINGLE = "best_single"
     BROADCAST_TOP_N = "broadcast_top_n"
+
+
+class ConsensusStrategy(str, Enum):
+    """How to resolve consensus across broadcast agent outcomes."""
+
+    MAJORITY = "majority"
+    QUALITY_WEIGHTED = "quality_weighted"
+
+
+class AgentFailureKind(str, Enum):
+    """Why an agent execution failed."""
+
+    TIMEOUT = "timeout"
+    EXCEPTION = "exception"
+    UNBOUND = "unbound"
 
 
 @dataclass
@@ -55,6 +73,7 @@ class AgentExecutionResult:
     score_after: float = 0.0
     formatted_message: str = ""
     error: str | None = None
+    failure_kind: AgentFailureKind | None = None
     skipped: bool = False
     duration_ms: float = 0.0
 
@@ -63,9 +82,35 @@ class AgentExecutionResult:
         return (
             not self.skipped
             and self.error is None
+            and self.failure_kind is None
             and self.outcome is not None
             and self.outcome not in (ResonanceOutcome.FAILURE, ResonanceOutcome.REJECTION)
         )
+
+    @property
+    def timed_out(self) -> bool:
+        return self.failure_kind == AgentFailureKind.TIMEOUT
+
+    @property
+    def failed(self) -> bool:
+        return self.failure_kind is not None or self.outcome in (
+            ResonanceOutcome.FAILURE,
+            ResonanceOutcome.REJECTION,
+        )
+
+
+@dataclass(frozen=True)
+class SwarmExecutionMetrics:
+    """Observability metrics for a single swarm execution."""
+
+    total_duration_ms: float
+    success_rate: float
+    average_quality: float
+    failure_count: int
+    timeout_count: int
+    exception_count: int
+    unbound_count: int
+    agents_executed: int
 
 
 @dataclass(frozen=True)
@@ -78,8 +123,16 @@ class SwarmResult:
     agent_results: tuple[AgentExecutionResult, ...]
     best_result: AgentExecutionResult | None = None
     consensus_outcome: ResonanceOutcome | None = None
+    consensus_strategy: ConsensusStrategy = ConsensusStrategy.QUALITY_WEIGHTED
     swarm_quality: float = 0.0
     swarm_confidence: float = 0.0
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    metrics: SwarmExecutionMetrics | None = None
+
+    @property
+    def duration_ms(self) -> float:
+        return (self.completed_at - self.started_at).total_seconds() * 1000.0
 
     @property
     def success_count(self) -> int:
@@ -87,7 +140,7 @@ class SwarmResult:
 
     @property
     def failure_count(self) -> int:
-        return len(self.agent_results) - self.success_count
+        return sum(1 for r in self.agent_results if r.failed or not r.succeeded)
 
 
 AgentHandler = Callable[[ResonanceAgent, IntentSignal], Any]
@@ -99,7 +152,7 @@ class SwarmCoordinator:
 
     Accepts an intent, ranks agents (edge-aware when enabled), assigns to the
     best single agent or broadcasts to the top N, and can run full resonance
-    cycles via ``execute()``.
+    cycles via ``execute()`` with configurable timeouts and observability.
     """
 
     def __init__(
@@ -109,11 +162,13 @@ class SwarmCoordinator:
         router: IntentRouter | None = None,
         *,
         agents: dict[str, ResonanceAgent] | None = None,
+        execution_config: SwarmExecutionConfig | None = None,
     ) -> None:
         self._registry = registry
         self._reputation = reputation or ReputationLayer()
         self._router = router or IntentRouter(registry, self._reputation)
         self._agents: dict[str, ResonanceAgent] = dict(agents or {})
+        self._config = execution_config or load_swarm_config()
 
     @property
     def registry(self) -> AgentRegistry:
@@ -130,6 +185,10 @@ class SwarmCoordinator:
     @property
     def score_manager(self) -> ResonanceScoreManager:
         return self._reputation.score_manager
+
+    @property
+    def execution_config(self) -> SwarmExecutionConfig:
+        return self._config
 
     def bind_agent(
         self,
@@ -204,10 +263,11 @@ class SwarmCoordinator:
                     )
 
         logger.info(
-            "Swarm dispatch strategy=%s agents=%s intent=%s",
+            "swarm_dispatch strategy=%s agents=%s intent=%s signal_hash=%s",
             resolved.value,
             [a.agent_name for a in assignments],
             assignments[0].intent_label if assignments else "n/a",
+            signal.signal_hash,
         )
 
         return SwarmAssignment(
@@ -225,60 +285,185 @@ class SwarmCoordinator:
         top_n: int = 3,
         use_edge_data: bool = True,
         timeout_s: float | None = None,
+        max_parallel: int | None = None,
+        consensus_strategy: ConsensusStrategy | str | None = None,
         record_reputation: bool = True,
         apply_swarm_bonus: bool = False,
     ) -> SwarmResult:
         """
         Route, run resonance cycles on selected agent(s), and aggregate outcomes.
 
-        Successful ``process_intent`` calls record reputation via the agent's
-        ``run_once()`` path. Unbound agents, timeouts, and exceptions are
-        recorded manually when ``record_reputation=True``.
+        Individual agent failures, timeouts, and exceptions are isolated — the
+        swarm continues and returns partial results. Successful ``process_intent``
+        calls record reputation via ``run_once()``; other failures are recorded
+        manually when ``record_reputation=True``.
         """
+        started_at = datetime.now(timezone.utc)
+        resolved_strategy = (
+            strategy
+            if isinstance(strategy, SwarmStrategy)
+            else SwarmStrategy(str(strategy))
+        )
+        resolved_consensus = self._resolve_consensus_strategy(consensus_strategy)
+        effective_timeout = self._effective_timeout(timeout_s)
+        parallel_limit = max_parallel if max_parallel is not None else self._config.max_parallel
+
         dispatch = self.dispatch(
             signal,
-            strategy=strategy,
+            strategy=resolved_strategy,
             top_n=top_n,
             use_edge_data=use_edge_data,
             submit_intent=False,
         )
 
-        agent_results: list[AgentExecutionResult] = []
-        for assignment in dispatch.assignments:
-            try:
-                result = self._execute_on_agent(
-                    assignment,
-                    signal,
-                    timeout_s=timeout_s,
-                    record_reputation=record_reputation,
-                )
-            finally:
-                self.release_load(assignment.agent_id)
-            agent_results.append(result)
+        agent_names = [a.agent_name for a in dispatch.assignments]
+        logger.info(
+            "swarm_execute_start signal_hash=%s strategy=%s agents=%s "
+            "timeout_s=%s max_parallel=%s consensus=%s",
+            signal.signal_hash,
+            resolved_strategy.value,
+            agent_names,
+            effective_timeout,
+            parallel_limit,
+            resolved_consensus.value,
+        )
+        emit_axiom_event(
+            "swarm_execute_start",
+            {
+                "signal_hash": signal.signal_hash,
+                "strategy": resolved_strategy.value,
+                "agent_count": len(dispatch.assignments),
+                "timeout_s": effective_timeout,
+                "consensus_strategy": resolved_consensus.value,
+            },
+        )
+
+        agent_results = self._run_agents_parallel(
+            dispatch.assignments,
+            signal,
+            timeout_s=effective_timeout,
+            max_parallel=parallel_limit,
+            record_reputation=record_reputation,
+        )
 
         best = self._select_best(agent_results)
-        consensus = self._consensus_outcome(agent_results)
-        resolved = dispatch.strategy
-        swarm_quality = self._aggregate_quality(agent_results, resolved)
-        swarm_confidence = self._aggregate_confidence(agent_results, resolved)
+        consensus = self._consensus_outcome(agent_results, resolved_consensus)
+        swarm_quality = self._aggregate_quality(agent_results, resolved_strategy)
+        swarm_confidence = self._aggregate_confidence(agent_results, resolved_strategy)
+        completed_at = datetime.now(timezone.utc)
+        metrics = self._build_metrics(agent_results, started_at, completed_at)
 
         if apply_swarm_bonus and record_reputation:
             self._apply_swarm_reputation_bonus(agent_results, swarm_quality)
 
-        return SwarmResult(
+        result = SwarmResult(
             signal=signal,
-            strategy=resolved,
+            strategy=resolved_strategy,
             dispatch=dispatch,
             agent_results=tuple(agent_results),
             best_result=best,
             consensus_outcome=consensus,
+            consensus_strategy=resolved_consensus,
             swarm_quality=swarm_quality,
             swarm_confidence=swarm_confidence,
+            started_at=started_at,
+            completed_at=completed_at,
+            metrics=metrics,
         )
+
+        self._log_execution_complete(result)
+        return result
 
     def release_load(self, agent_id: str, amount: int = 1) -> None:
         """Decrement load after an agent completes a cycle."""
         self._registry.decrement_load(agent_id, amount)
+
+    def _effective_timeout(self, timeout_s: float | None) -> float | None:
+        if timeout_s is not None:
+            return timeout_s if timeout_s > 0 else None
+        config_timeout = self._config.agent_timeout_s
+        return config_timeout if config_timeout > 0 else None
+
+    def _resolve_consensus_strategy(
+        self,
+        override: ConsensusStrategy | str | None,
+    ) -> ConsensusStrategy:
+        if override is None:
+            return ConsensusStrategy(self._config.consensus_strategy)
+        if isinstance(override, ConsensusStrategy):
+            return override
+        return ConsensusStrategy(str(override))
+
+    def _run_agents_parallel(
+        self,
+        assignments: Sequence[RoutingAssignment],
+        signal: IntentSignal,
+        *,
+        timeout_s: float | None,
+        max_parallel: int,
+        record_reputation: bool,
+    ) -> list[AgentExecutionResult]:
+        if not assignments:
+            return []
+
+        if len(assignments) == 1 or max_parallel <= 1:
+            results: list[AgentExecutionResult] = []
+            for assignment in assignments:
+                try:
+                    results.append(
+                        self._execute_on_agent(
+                            assignment,
+                            signal,
+                            timeout_s=timeout_s,
+                            record_reputation=record_reputation,
+                        )
+                    )
+                finally:
+                    self.release_load(assignment.agent_id)
+            return results
+
+        indexed_results: dict[int, AgentExecutionResult] = {}
+        workers = min(max_parallel, len(assignments))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    self._execute_on_agent,
+                    assignment,
+                    signal,
+                    timeout_s=timeout_s,
+                    record_reputation=record_reputation,
+                ): (index, assignment)
+                for index, assignment in enumerate(assignments)
+            }
+            for future in as_completed(futures):
+                index, assignment = futures[future]
+                try:
+                    indexed_results[index] = future.result()
+                except Exception as exc:
+                    logger.exception(
+                        "swarm_agent_unexpected_error agent=%s error=%s",
+                        assignment.agent_name,
+                        exc,
+                    )
+                    if record_reputation:
+                        self._record_failure(
+                            assignment.agent_id,
+                            signal,
+                            reason=str(exc),
+                        )
+                    indexed_results[index] = AgentExecutionResult(
+                        agent_id=assignment.agent_id,
+                        agent_name=assignment.agent_name,
+                        routing=assignment,
+                        outcome=ResonanceOutcome.FAILURE,
+                        error=str(exc),
+                        failure_kind=AgentFailureKind.EXCEPTION,
+                        score_after=self.score_manager.get_score(assignment.agent_id),
+                    )
+                finally:
+                    self.release_load(assignment.agent_id)
+
+        return [indexed_results[i] for i in range(len(assignments))]
 
     def _execute_on_agent(
         self,
@@ -296,14 +481,17 @@ class SwarmCoordinator:
                     signal,
                     reason="agent not bound to coordinator",
                 )
-            return AgentExecutionResult(
+            result = AgentExecutionResult(
                 agent_id=routing.agent_id,
                 agent_name=routing.agent_name,
                 routing=routing,
                 outcome=ResonanceOutcome.FAILURE,
                 error="agent not bound to coordinator",
+                failure_kind=AgentFailureKind.UNBOUND,
                 score_after=self.score_manager.get_score(routing.agent_id),
             )
+            self._log_agent_result(result)
+            return result
 
         start = time.perf_counter()
         try:
@@ -312,7 +500,7 @@ class SwarmCoordinator:
             else:
                 outcome = agent.process_intent(signal)
             duration_ms = (time.perf_counter() - start) * 1000.0
-            return AgentExecutionResult(
+            result = AgentExecutionResult(
                 agent_id=routing.agent_id,
                 agent_name=routing.agent_name,
                 routing=routing,
@@ -322,6 +510,8 @@ class SwarmCoordinator:
                 formatted_message=agent.last_formatted_result(),
                 duration_ms=duration_ms,
             )
+            self._log_agent_result(result)
+            return result
         except TimeoutError:
             duration_ms = (time.perf_counter() - start) * 1000.0
             if record_reputation:
@@ -330,28 +520,34 @@ class SwarmCoordinator:
                     signal,
                     reason=f"timeout after {timeout_s}s",
                 )
-            return AgentExecutionResult(
+            result = AgentExecutionResult(
                 agent_id=routing.agent_id,
                 agent_name=routing.agent_name,
                 routing=routing,
                 outcome=ResonanceOutcome.FAILURE,
                 error=f"timeout after {timeout_s}s",
+                failure_kind=AgentFailureKind.TIMEOUT,
                 score_after=self.score_manager.get_score(routing.agent_id),
                 duration_ms=duration_ms,
             )
+            self._log_agent_result(result)
+            return result
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
             if record_reputation:
                 self._record_failure(routing.agent_id, signal, reason=str(exc))
-            return AgentExecutionResult(
+            result = AgentExecutionResult(
                 agent_id=routing.agent_id,
                 agent_name=routing.agent_name,
                 routing=routing,
                 outcome=ResonanceOutcome.FAILURE,
                 error=str(exc),
+                failure_kind=AgentFailureKind.EXCEPTION,
                 score_after=self.score_manager.get_score(routing.agent_id),
                 duration_ms=duration_ms,
             )
+            self._log_agent_result(result)
+            return result
 
     def _record_failure(
         self,
@@ -366,6 +562,12 @@ class SwarmCoordinator:
             metadata={"swarm_error": reason},
             intent_signal_hash=signal.signal_hash,
             confidence=signal.confidence,
+        )
+        logger.warning(
+            "swarm_reputation_failure agent_id=%s signal_hash=%s reason=%s",
+            agent_id,
+            signal.signal_hash,
+            reason,
         )
 
     @staticmethod
@@ -398,32 +600,50 @@ class SwarmCoordinator:
         return result[0]
 
     @staticmethod
+    def _agent_rank_score(result: AgentExecutionResult) -> float:
+        """Composite ranking for best-result selection."""
+        if not result.succeeded:
+            return -1.0
+        speed_bonus = max(0.0, 1.0 - min(result.duration_ms / 10_000.0, 1.0))
+        return (
+            result.quality * 0.45
+            + result.routing.combined_score * 0.35
+            + result.routing.selection_weight * 0.1
+            + speed_bonus * 0.1
+        )
+
+    @staticmethod
     def _select_best(
         results: Sequence[AgentExecutionResult],
     ) -> AgentExecutionResult | None:
         candidates = [r for r in results if r.succeeded]
         if not candidates:
-            candidates = [r for r in results if not r.skipped]
-        if not candidates:
             return None
-        return max(
-            candidates,
-            key=lambda r: (r.quality, r.routing.combined_score, -r.duration_ms),
-        )
+        return max(candidates, key=SwarmCoordinator._agent_rank_score)
 
     @staticmethod
     def _consensus_outcome(
         results: Sequence[AgentExecutionResult],
+        strategy: ConsensusStrategy,
     ) -> ResonanceOutcome | None:
-        outcomes = [
-            r.outcome for r in results if r.outcome is not None and not r.skipped
-        ]
-        if not outcomes:
+        eligible = [r for r in results if r.outcome is not None and not r.skipped]
+        if not eligible:
             return None
-        counts: dict[ResonanceOutcome, int] = {}
-        for outcome in outcomes:
-            counts[outcome] = counts.get(outcome, 0) + 1
-        return max(counts, key=lambda o: counts[o])
+
+        if strategy == ConsensusStrategy.MAJORITY:
+            counts: dict[ResonanceOutcome, int] = {}
+            for result in eligible:
+                counts[result.outcome] = counts.get(result.outcome, 0) + 1
+            return max(counts, key=lambda outcome: counts[outcome])
+
+        weights: dict[ResonanceOutcome, float] = {}
+        for result in eligible:
+            if result.succeeded:
+                weight = result.quality * result.routing.combined_score
+            else:
+                weight = 0.05
+            weights[result.outcome] = weights.get(result.outcome, 0.0) + weight
+        return max(weights, key=lambda outcome: weights[outcome])
 
     @staticmethod
     def _aggregate_quality(
@@ -458,6 +678,77 @@ class SwarmCoordinator:
         )
         return min(1.0, avg_routing * 0.4 + success_rate * 0.35 + avg_quality * 0.25)
 
+    @staticmethod
+    def _build_metrics(
+        results: Sequence[AgentExecutionResult],
+        started_at: datetime,
+        completed_at: datetime,
+    ) -> SwarmExecutionMetrics:
+        total_ms = (completed_at - started_at).total_seconds() * 1000.0
+        succeeded = [r for r in results if r.succeeded]
+        failures = [r for r in results if r.failed or not r.succeeded]
+        return SwarmExecutionMetrics(
+            total_duration_ms=total_ms,
+            success_rate=len(succeeded) / len(results) if results else 0.0,
+            average_quality=(
+                sum(r.quality for r in succeeded) / len(succeeded) if succeeded else 0.0
+            ),
+            failure_count=len(failures),
+            timeout_count=sum(1 for r in results if r.timed_out),
+            exception_count=sum(
+                1 for r in results if r.failure_kind == AgentFailureKind.EXCEPTION
+            ),
+            unbound_count=sum(
+                1 for r in results if r.failure_kind == AgentFailureKind.UNBOUND
+            ),
+            agents_executed=len(results),
+        )
+
+    def _log_agent_result(self, result: AgentExecutionResult) -> None:
+        logger.info(
+            "swarm_agent_result agent=%s outcome=%s quality=%.2f "
+            "duration_ms=%.1f failure_kind=%s error=%s",
+            result.agent_name,
+            result.outcome.value if result.outcome else "none",
+            result.quality,
+            result.duration_ms,
+            result.failure_kind.value if result.failure_kind else "",
+            result.error or "",
+        )
+
+    def _log_execution_complete(self, result: SwarmResult) -> None:
+        metrics = result.metrics
+        logger.info(
+            "swarm_execute_complete signal_hash=%s strategy=%s "
+            "success=%d failure=%d swarm_quality=%.2f confidence=%.2f "
+            "consensus=%s duration_ms=%.1f",
+            result.signal.signal_hash,
+            result.strategy.value,
+            result.success_count,
+            result.failure_count,
+            result.swarm_quality,
+            result.swarm_confidence,
+            result.consensus_outcome.value if result.consensus_outcome else "none",
+            metrics.total_duration_ms if metrics else result.duration_ms,
+        )
+        if metrics:
+            emit_axiom_event(
+                "swarm_execute_complete",
+                {
+                    "signal_hash": result.signal.signal_hash,
+                    "strategy": result.strategy.value,
+                    "consensus_strategy": result.consensus_strategy.value,
+                    "success_count": result.success_count,
+                    "failure_count": metrics.failure_count,
+                    "timeout_count": metrics.timeout_count,
+                    "success_rate": metrics.success_rate,
+                    "average_quality": metrics.average_quality,
+                    "swarm_quality": result.swarm_quality,
+                    "swarm_confidence": result.swarm_confidence,
+                    "duration_ms": metrics.total_duration_ms,
+                },
+            )
+
     def _apply_swarm_reputation_bonus(
         self,
         results: Sequence[AgentExecutionResult],
@@ -477,6 +768,12 @@ class SwarmCoordinator:
                     bonus,
                     quality=swarm_quality,
                     metadata={"swarm_bonus": True},
+                )
+                logger.info(
+                    "swarm_reputation_bonus agent=%s bonus=%s quality=%.2f",
+                    result.agent_name,
+                    bonus.value,
+                    swarm_quality,
                 )
 
     @staticmethod

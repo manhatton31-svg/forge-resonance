@@ -214,6 +214,38 @@ AGENT_LOOP_INTERVAL_SECONDS = float(os.getenv("AGENT_LOOP_INTERVAL", "5.0"))
 WORKING_MEMORY_TTL_SECONDS = int(os.getenv("WORKING_MEMORY_TTL", "3600"))
 EPISODIC_MEMORY_LIMIT = int(os.getenv("EPISODIC_MEMORY_LIMIT", "1000"))
 
+# ---------------------------------------------------------------------------
+# Swarm execution (Fabric multi-agent coordination)
+# ---------------------------------------------------------------------------
+
+SWARM_AGENT_TIMEOUT = float(os.getenv("SWARM_AGENT_TIMEOUT", "120.0"))
+SWARM_MAX_PARALLEL = max(1, int(os.getenv("SWARM_MAX_PARALLEL", "3")))
+SwarmConsensusStrategy = Literal["majority", "quality_weighted"]
+_SWARM_CONSENSUS_RAW = os.getenv("SWARM_CONSENSUS_STRATEGY", "quality_weighted").lower()
+SWARM_CONSENSUS_STRATEGY: SwarmConsensusStrategy = (
+    _SWARM_CONSENSUS_RAW
+    if _SWARM_CONSENSUS_RAW in ("majority", "quality_weighted")
+    else "quality_weighted"
+)
+
+
+@dataclass(frozen=True)
+class SwarmExecutionConfig:
+    """Runtime configuration for swarm intent execution."""
+
+    agent_timeout_s: float = SWARM_AGENT_TIMEOUT
+    max_parallel: int = SWARM_MAX_PARALLEL
+    consensus_strategy: SwarmConsensusStrategy = SWARM_CONSENSUS_STRATEGY
+
+
+def load_swarm_config() -> SwarmExecutionConfig:
+    """Load swarm execution settings from environment."""
+    return SwarmExecutionConfig(
+        agent_timeout_s=SWARM_AGENT_TIMEOUT,
+        max_parallel=SWARM_MAX_PARALLEL,
+        consensus_strategy=SWARM_CONSENSUS_STRATEGY,
+    )
+
 
 @dataclass
 class ForgeConfig:
@@ -234,6 +266,9 @@ class ForgeConfig:
     log_level: str = LOG_LEVEL
     resonance_score_default: float = RESONANCE_SCORE_DEFAULT
     edge_reputation_enabled: bool = EDGE_REPUTATION_ENABLED
+    swarm_agent_timeout: float = SWARM_AGENT_TIMEOUT
+    swarm_max_parallel: int = SWARM_MAX_PARALLEL
+    swarm_consensus_strategy: SwarmConsensusStrategy = SWARM_CONSENSUS_STRATEGY
 
     def ensure_directories(self) -> None:
         """Create on-disk data directories if they do not exist."""

@@ -15,7 +15,14 @@ from core.scoring import InMemoryScoreStore, OutcomeTier, ResonanceScorer
 from fabric.capabilities import capability_score_for_agent
 from fabric.router import IntentRouter
 from core.resonance_agent import ResonanceOutcome
-from fabric.swarm import SwarmCoordinator, SwarmStrategy
+import time
+
+from fabric.swarm import (
+    AgentFailureKind,
+    ConsensusStrategy,
+    SwarmCoordinator,
+    SwarmStrategy,
+)
 from reputation.edge_kv import CloudflareKVClient
 from reputation.score_layer import (
     InMemoryOutcomeHistoryStore,
@@ -347,3 +354,157 @@ class TestSwarmExecution:
         assert result.swarm_quality >= 0.75
         score_after_bonus = reputation_layer.score_manager.get_score("atlas")
         assert score_after_bonus > score_before_bonus
+
+
+class TestSwarmReliability:
+    def test_agent_timeout_isolated(
+        self, registry: AgentRegistry, reputation_layer: ReputationLayer
+    ):
+        class _SlowAgent:
+            agent_id = "atlas"
+            name = "atlas-analytics"
+
+            def process_intent(self, signal):
+                time.sleep(0.3)
+                return ResonanceOutcome.SUCCESS
+
+            def last_quality_estimate(self):
+                return 0.8
+
+            def last_formatted_result(self):
+                return "slow"
+
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        swarm.bind_agent(_SlowAgent())  # type: ignore[arg-type]
+        result = swarm.execute(_purchase_signal(), timeout_s=0.05)
+
+        agent_result = result.agent_results[0]
+        assert agent_result.timed_out
+        assert agent_result.failure_kind == AgentFailureKind.TIMEOUT
+        assert result.metrics is not None
+        assert result.metrics.timeout_count == 1
+        assert result.best_result is None
+        assert registry.get("atlas").current_load == 0
+
+    def test_partial_failure_does_not_crash_swarm(
+        self, registry: AgentRegistry, reputation_layer: ReputationLayer
+    ):
+        class _GoodAgent:
+            agent_id = "atlas"
+            name = "atlas-analytics"
+
+            def process_intent(self, signal):
+                return ResonanceOutcome.SUCCESS
+
+            def last_quality_estimate(self):
+                return 0.85
+
+            def last_formatted_result(self):
+                return "ok"
+
+        class _BadAgent:
+            agent_id = "nova"
+            name = "nova-research"
+
+            def process_intent(self, signal):
+                raise RuntimeError("agent crashed")
+
+            def last_quality_estimate(self):
+                return 0.0
+
+            def last_formatted_result(self):
+                return ""
+
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        swarm.bind_agent(_GoodAgent())  # type: ignore[arg-type]
+        swarm.bind_agent(_BadAgent())  # type: ignore[arg-type]
+
+        result = swarm.execute(
+            _purchase_signal(),
+            strategy=SwarmStrategy.BROADCAST_TOP_N,
+            top_n=2,
+        )
+        assert len(result.agent_results) == 2
+        assert result.success_count == 1
+        assert result.metrics is not None
+        assert result.metrics.exception_count == 1
+        assert result.best_result is not None
+        assert result.best_result.agent_id == "atlas"
+
+    def test_quality_weighted_consensus_prefers_high_quality(
+        self, registry: AgentRegistry, reputation_layer: ReputationLayer
+    ):
+        class _OutcomeAgent:
+            def __init__(
+                self,
+                agent_id: str,
+                name: str,
+                outcome: ResonanceOutcome,
+                quality: float,
+            ) -> None:
+                self.agent_id = agent_id
+                self.name = name
+                self._outcome = outcome
+                self._quality = quality
+
+            def process_intent(self, signal):
+                return self._outcome
+
+            def last_quality_estimate(self):
+                return self._quality
+
+            def last_formatted_result(self):
+                return self._outcome.value
+
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        swarm.bind_agent(
+            _OutcomeAgent("atlas", "atlas-analytics", ResonanceOutcome.SUCCESS, 0.1)
+        )  # type: ignore[arg-type]
+        swarm.bind_agent(
+            _OutcomeAgent("nova", "nova-research", ResonanceOutcome.SUCCESS, 0.1)
+        )  # type: ignore[arg-type]
+        swarm.bind_agent(
+            _OutcomeAgent("echo", "echo-support", ResonanceOutcome.PARTIAL, 0.95)
+        )  # type: ignore[arg-type]
+
+        majority = swarm.execute(
+            _purchase_signal(),
+            strategy=SwarmStrategy.BROADCAST_TOP_N,
+            top_n=3,
+            consensus_strategy=ConsensusStrategy.MAJORITY,
+        )
+        weighted = swarm.execute(
+            _purchase_signal(),
+            strategy=SwarmStrategy.BROADCAST_TOP_N,
+            top_n=3,
+            consensus_strategy=ConsensusStrategy.QUALITY_WEIGHTED,
+        )
+
+        assert majority.consensus_outcome == ResonanceOutcome.SUCCESS
+        assert weighted.consensus_outcome == ResonanceOutcome.PARTIAL
+
+    def test_execution_metadata_populated(
+        self, registry: AgentRegistry, reputation_layer: ReputationLayer
+    ):
+        class _StubAgent:
+            agent_id = "atlas"
+            name = "atlas-analytics"
+
+            def process_intent(self, signal):
+                return ResonanceOutcome.SUCCESS
+
+            def last_quality_estimate(self):
+                return 0.7
+
+            def last_formatted_result(self):
+                return "done"
+
+        swarm = SwarmCoordinator(registry, reputation_layer)
+        swarm.bind_agent(_StubAgent())  # type: ignore[arg-type]
+        result = swarm.execute(_purchase_signal())
+
+        assert result.started_at <= result.completed_at
+        assert result.metrics is not None
+        assert result.metrics.agents_executed == 1
+        assert result.metrics.success_rate == 1.0
+        assert result.consensus_strategy == ConsensusStrategy.QUALITY_WEIGHTED

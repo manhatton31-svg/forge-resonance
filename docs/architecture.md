@@ -194,9 +194,11 @@ SwarmCoordinator.dispatch()          # routing + optional submit (no run_once)
 
 SwarmCoordinator.execute()           # route → process_intent → aggregate
         ├── bind_agent() / bind_agents() — live ResonanceAgent instances
+        ├── parallel execution (ThreadPoolExecutor, SWARM_MAX_PARALLEL)
+        ├── per-agent timeout (SWARM_AGENT_TIMEOUT, overridable per call)
         ├── agent.process_intent(signal) — standardized swarm entry point
-        ├── AgentExecutionResult per participant (outcome, quality, duration)
-        ├── SwarmResult — best result, consensus, swarm_quality, confidence
+        ├── AgentExecutionResult per participant (outcome, quality, failure_kind)
+        ├── SwarmResult — best result, consensus, metrics, timing metadata
         └── reputation feedback (automatic via run_once; manual on failure/timeout)
 ```
 
@@ -204,13 +206,43 @@ SwarmCoordinator.execute()           # route → process_intent → aggregate
 
 | Strategy | Behavior |
 |----------|----------|
-| `BEST_SINGLE` | Route to top-1 agent, run one resonance cycle, pick best by quality |
-| `BROADCAST_TOP_N` | Fan out to top N agents, aggregate quality average and consensus outcome |
+| `BEST_SINGLE` | Route to top-1 agent, run one resonance cycle, pick best by composite rank |
+| `BROADCAST_TOP_N` | Fan out to top N agents (parallel), aggregate quality and consensus |
+
+**Consensus strategies** (`SWARM_CONSENSUS_STRATEGY`)
+
+| Strategy | Behavior |
+|----------|----------|
+| `majority` | Simple vote count across agent outcomes |
+| `quality_weighted` | Weight votes by `quality × routing.combined_score` (default) |
+
+**Reliability**
+
+- Per-agent timeouts isolate slow agents; other agents continue unaffected
+- Exceptions and unbound agents return `AgentExecutionResult` with `failure_kind` (`timeout`, `exception`, `unbound`)
+- `best_result` is only set from successful agents — partial swarm failure is safe
+
+**Observability**
+
+Structured log events: `swarm_execute_start`, `swarm_agent_result`, `swarm_execute_complete`, `swarm_reputation_failure`. Axiom events emitted when `AXIOM_TOKEN` is set.
+
+`SwarmExecutionMetrics` on every `SwarmResult`:
+
+- `total_duration_ms`, `success_rate`, `average_quality`
+- `failure_count`, `timeout_count`, `exception_count`, `unbound_count`
+
+**Configuration** (`.env`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SWARM_AGENT_TIMEOUT` | `120` | Per-agent cycle timeout (seconds; `0` = disabled) |
+| `SWARM_MAX_PARALLEL` | `3` | Max concurrent agents in broadcast mode |
+| `SWARM_CONSENSUS_STRATEGY` | `quality_weighted` | Broadcast consensus algorithm |
 
 **Result types**
 
-- `AgentExecutionResult` — per-agent outcome, formatted message, score after cycle
-- `SwarmResult` — original signal, dispatch assignment, aggregated confidence/quality
+- `AgentExecutionResult` — per-agent outcome, formatted message, `failure_kind`, duration
+- `SwarmResult` — dispatch, best/consensus, `started_at`/`completed_at`, `metrics`
 
 Unbound agents, timeouts, and exceptions record `OutcomeTier.FAILURE` without double-counting successful `run_once()` paths. Optional `apply_swarm_bonus` nudges reputation when swarm-level quality is very high or low.
 
