@@ -177,6 +177,8 @@ forge-resonance/
 
 **Live production:** https://forge-resonance.vercel.app
 
+Edge Reputation (Cloudflare KV) is **configured** in production (`EDGE_REPUTATION_ENABLED`, namespace `forge-resonance-reputation`). Add `CLOUDFLARE_API_TOKEN` in Vercel to activate KV reads/sync — see [docs/deployment.md](docs/deployment.md#cloudflare-kv-setup).
+
 ```bash
 vercel link && vercel --prod
 curl https://forge-resonance.vercel.app/api/health?deep=1
