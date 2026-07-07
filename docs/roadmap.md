@@ -14,7 +14,7 @@ Last updated: July 2026 · **v0.1.0 released**
 | M4 Fabric & Edge | **Complete (v0.1)** | KV reputation, routing, swarm execution |
 | M5 Production & API | **Complete (v0.1)** | Vercel deployment, API hardening, adoption polish |
 
-**v0.1.0** (2026-07-06) marks the first foundation release. See [CHANGELOG.md](../CHANGELOG.md) for the full release notes. Post-v0.1 work is tracked under `[Unreleased]` in the changelog.
+**v0.1.0** (2026-07-06) is published on GitHub: [Initial Public Foundation release](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0) (`72ef29b`). See [CHANGELOG.md](../CHANGELOG.md) for full notes. Post-v0.1 work is tracked under `[Unreleased]` in the changelog.
 
 ---
 
@@ -123,7 +123,7 @@ Last updated: July 2026 · **v0.1.0 released**
 
 | MCP | Current Use | Future Use |
 |-----|-------------|------------|
-| GitHub | Source control, releases | CI/CD, release automation |
+| GitHub | Source control, [v0.1.0 release](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0) | CI/CD, release automation |
 | Neon | Agent memory + scoring | Branch-per-agent dev environments |
 | Vercel | API deployment | Serverless agent endpoints |
 | Cloudflare | KV edge reputation | Edge Workers agents |
@@ -141,6 +141,5 @@ Last updated: July 2026 · **v0.1.0 released**
 2. **Probabilistic swarm router** — weighted random selection over `rank_agents()`
 3. **KV backfill job** — bulk sync from Neon to KV for existing agents
 4. **Operator API** — `/api/agents` CRUD on Vercel
-5. **GitHub release tag** — publish `v0.1.0` with release notes from CHANGELOG
 
 See [getting-started.md](getting-started.md) to run what exists today.

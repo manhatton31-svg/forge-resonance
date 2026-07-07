@@ -1,6 +1,6 @@
 # ForgeResonance
 
-**v0.1.0** · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+**[v0.1.0](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0)** · [Releases](https://github.com/manhatton31-svg/forge-resonance/releases) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 **Earn distribution through demonstrated value — not ad spend.**
 
@@ -55,7 +55,7 @@ ForgeResonance follows [Semantic Versioning](https://semver.org/). Release notes
 from forge_resonance import __version__  # "0.1.0"
 ```
 
-Tag `v0.1.0` marks the first foundation release (M1–M5 complete). Future work is tracked under `[Unreleased]` in the changelog.
+**[v0.1.0](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0)** is the first foundation release (M1–M5 complete). Future work is tracked under `[Unreleased]` in the changelog.
 
 ---
 
