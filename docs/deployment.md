@@ -25,9 +25,13 @@ The Vercel deployment is optimized for **webhooks**, **health checks**, **fabric
 
 **Validated 2026-07-06:** `GET /api/health` (ok), `GET /api/health?deep=1` (Neon reachable), `GET /api/fabric_health` (ok), `POST /api/swarm` route mode (assignments returned).
 
-**Production env vars configured:** `DATABASE_URL`, `FORGE_STORAGE_BACKEND=neon`
+**Production env vars configured:** `DATABASE_URL`, `FORGE_STORAGE_BACKEND=neon`, `EDGE_REPUTATION_ENABLED=true`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_NAMESPACE`
 
-**Still manual (dashboard):** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_NAMESPACE`, `EDGE_REPUTATION_ENABLED=true` for edge KV; optional `FORGE_API_KEY`, `ARCLY_API_KEY`.
+**Edge KV namespace (provisioned):** `forge-resonance-reputation` (`85d4cca7b6e14e32b61c3283e14833d8`) on account `9eb4a5b3e147fddda19c7bfaa5a9f674`
+
+**Edge Reputation status:** Configuration is deployed; KV reachability requires `CLOUDFLARE_API_TOKEN` (Workers KV Storage Edit). After adding the token in Vercel and redeploying, `GET /api/health?deep=1` should report `checks.edge_kv.reachable: true` and `fabric.edge_reachable: true`.
+
+**Still manual (one-time):** Create a [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) with **Workers KV Storage → Edit** (account-scoped), add as `CLOUDFLARE_API_TOKEN` in Vercel production, then `vercel --prod`. Optional: `FORGE_API_KEY`, `ARCLY_API_KEY`.
 
 ## Prerequisites
 
