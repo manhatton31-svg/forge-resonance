@@ -115,7 +115,20 @@ pip install -r requirements-dev.txt   # includes pytest
 python -m pytest tests/ -v
 ```
 
-Expect **172** passing tests.
+Expect **174** passing tests.
+
+---
+
+## Versioning
+
+ForgeResonance uses [Semantic Versioning](https://semver.org/). The current release is **v0.1.0**.
+
+```python
+from forge_resonance import __version__
+print(__version__)  # 0.1.0
+```
+
+Release history: [CHANGELOG.md](../CHANGELOG.md) · Contributing: [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ---
 
@@ -217,4 +230,5 @@ Handoffs include reputation snapshot and offer bundle. Arcly can POST outcomes t
 - [extending.md](extending.md) — add agents, swarm routes, API handlers
 - [deployment.md](deployment.md) — Vercel + Cloudflare KV
 - [principles.md](principles.md) — design constraints and glossary
-- [roadmap.md](roadmap.md) — milestone status and future work
+- [roadmap.md](roadmap.md) — milestone status (M1–M5 complete for v0.1)
+- [CHANGELOG.md](../CHANGELOG.md) — release notes and unreleased work

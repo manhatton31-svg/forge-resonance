@@ -1,5 +1,7 @@
 # ForgeResonance
 
+**v0.1.0** · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+
 **Earn distribution through demonstrated value — not ad spend.**
 
 ForgeResonance is a reputation-weighted fabric of sovereign AI agents. Each agent senses intent privately, delivers hyper-contextual value, accumulates a **Resonance Score** that governs Fabric visibility, and hands qualified opportunities to **Arcly AI Closer** for conversion.
@@ -33,7 +35,7 @@ No API keys. Template generation and in-memory reputation. **~2 minutes to first
 pip install -r requirements.txt
 python -m demo                    # single agent + multi-agent ranking
 python -m demo --swarm-only       # swarm execution across 3 agents
-python -m pytest tests/ -q        # 172 tests
+python -m pytest tests/ -q        # 174 tests
 ```
 
 **Example scripts** (same paths, no demo UI):
@@ -44,6 +46,16 @@ python examples/swarm_execute.py
 ```
 
 See [examples/](examples/) and [docs/getting-started.md](docs/getting-started.md).
+
+### Versioning & releases
+
+ForgeResonance follows [Semantic Versioning](https://semver.org/). Release notes are in [CHANGELOG.md](CHANGELOG.md).
+
+```python
+from forge_resonance import __version__  # "0.1.0"
+```
+
+Tag `v0.1.0` marks the first foundation release (M1–M5 complete). Future work is tracked under `[Unreleased]` in the changelog.
 
 ---
 
@@ -147,14 +159,16 @@ Full reference: [.env.example](.env.example)
 
 ```
 forge-resonance/
-├── core/           # ResonanceAgent, memory, scoring
-├── fabric/         # IntentRouter, SwarmCoordinator
-├── reputation/     # Resonance Score, edge KV
-├── api/            # Vercel serverless handlers
-├── demo/           # Interactive CLI (`python -m demo`)
-├── examples/       # Runnable integration scripts
-├── docs/           # Architecture, deployment, extending
-└── tests/          # 172 tests
+├── forge_resonance/  # Package metadata (`__version__`)
+├── core/             # ResonanceAgent, memory, scoring
+├── fabric/           # IntentRouter, SwarmCoordinator
+├── reputation/       # Resonance Score, edge KV
+├── api/              # Vercel serverless handlers
+├── demo/             # Interactive CLI (`python -m demo`)
+├── examples/         # Runnable integration scripts
+├── docs/             # Architecture, deployment, extending
+├── CHANGELOG.md      # Release history
+└── tests/            # 174 tests
 ```
 
 ---
@@ -179,8 +193,10 @@ Guide: [docs/deployment.md](docs/deployment.md)
 | M1 Foundation | Complete |
 | M2 Intent Harvesting | Complete |
 | M3 Resonance Engine | Complete |
-| M4 Fabric & Edge | In progress — KV, swarm, Vercel API |
-| M5 Production Launch | Planned |
+| M4 Fabric & Edge | Complete (v0.1) |
+| M5 Production & API | Complete (v0.1) |
+
+**v0.1.0** released 2026-07-06. Post-release work is in [CHANGELOG.md § Unreleased](CHANGELOG.md#unreleased).
 
 Details: [docs/roadmap.md](docs/roadmap.md)
 
@@ -206,4 +222,4 @@ Sovereignty · Privacy by design · Resonance over advertising · Arcly integrat
 
 ## License
 
-Proprietary — ForgeResonance Protocol / Arcly Intelligence Layer.
+[MIT](LICENSE) — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to extend and contribute.

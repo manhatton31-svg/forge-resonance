@@ -40,7 +40,7 @@ from fabric.swarm import (
 from reputation.edge_kv import create_edge_kv_client
 from reputation.score_layer import ReputationLayer, create_score_manager
 
-SERVICE_VERSION = "0.2.0"
+from forge_resonance.version import __version__ as SERVICE_VERSION
 
 
 @lru_cache(maxsize=1)

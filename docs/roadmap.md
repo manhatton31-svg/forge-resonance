@@ -1,6 +1,6 @@
 # ForgeResonance Roadmap
 
-Last updated: July 2026
+Last updated: July 2026 · **v0.1.0 released**
 
 ---
 
@@ -11,8 +11,10 @@ Last updated: July 2026
 | M1 Foundation | **Complete** | Agent runtime, memory, scoring, Arcly contract |
 | M2 Intent Harvesting | **Complete** | Embedding harvester, multi-turn, Firecrawl hook |
 | M3 Resonance Engine | **Complete** | Grok prompts, templates, injection, reputation layer |
-| M4 Fabric & Edge | **In Progress** | KV reputation (initial), Workers, swarm routing |
-| M5 Production Launch | Planned | Dashboard, full observability, operator tooling |
+| M4 Fabric & Edge | **Complete (v0.1)** | KV reputation, routing, swarm execution |
+| M5 Production & API | **Complete (v0.1)** | Vercel deployment, API hardening, adoption polish |
+
+**v0.1.0** (2026-07-06) marks the first foundation release. See [CHANGELOG.md](../CHANGELOG.md) for the full release notes. Post-v0.1 work is tracked under `[Unreleased]` in the changelog.
 
 ---
 
@@ -27,7 +29,7 @@ Last updated: July 2026
 | Arcly handoff contract | Done |
 | Neon database schema | Done |
 | GitHub repository | Done |
-| Unit test suite (~110 tests) | Done |
+| Unit test suite (174 tests) | Done |
 | Vercel deployment config | Done |
 | Interactive demo (`python -m demo`) | Done |
 
@@ -43,7 +45,7 @@ Last updated: July 2026
 | Firecrawl enrichment hook (`FIRECRAWL_ENABLED`) | Done |
 | Privacy boundary (hashed signals) | Done |
 
-**Remaining (M4+):**
+**Post-v0.1:**
 
 - Browser extension signal adapter
 - Zero-knowledge intent attestation prototype
@@ -64,14 +66,14 @@ Last updated: July 2026
 | Multi-agent demo ranking | Done |
 | Arcly two-way feedback (`/api/arcly_feedback`) | Done |
 
-**Remaining (M5):**
+**Post-v0.1:**
 
 - A/B resonance variant generation
 - Offer catalog UI for operators
 
 ---
 
-## M4: Fabric & Edge — In Progress (Q3–Q4 2026)
+## M4: Fabric & Edge — Complete (v0.1)
 
 | Deliverable | Status |
 |-------------|--------|
@@ -81,9 +83,11 @@ Last updated: July 2026
 | `EDGE_REPUTATION_ENABLED` config flag | Done |
 | `AgentRegistry` + `IntentRouter` + `SwarmCoordinator` | Done |
 | Capability-based intent routing | Done |
+| `SwarmCoordinator.execute()` with consensus and metrics | Done |
 | Demo: `python -m demo --swarm-only` | Done |
+| Examples: `examples/swarm_route.py`, `examples/swarm_execute.py` | Done |
 
-Remaining:
+**Post-v0.1:**
 
 - [ ] Cloudflare Workers deployment for edge agents
 - [ ] Weighted random selection (probabilistic routing via `selection_weight`)
@@ -91,17 +95,26 @@ Remaining:
 - [ ] Fabric-wide health dashboard (Axiom)
 - [ ] Decentralized score consensus (research)
 
-**Success criteria:** Route intent across 100+ edge agents using KV-cached reputation with Neon as source of truth.
-
 ---
 
-## M5: Production Launch (Q1 2027)
+## M5: Production & API — Complete (v0.1)
+
+| Deliverable | Status |
+|-------------|--------|
+| Vercel serverless API (`/api/health`, `/api/swarm`, etc.) | Done |
+| Serverless swarm route and execute modes | Done |
+| API auth, rate limits, validation, error envelope | Done |
+| `docs/deployment.md` and deployment config | Done |
+| README, examples, and `docs/extending.md` polish | Done |
+| Package versioning (`forge_resonance.__version__`) | Done |
+| `CHANGELOG.md` and v0.1 release tracking | Done |
+
+**Post-v0.1:**
 
 - [ ] Sentry error monitoring in production
 - [ ] Axiom telemetry pipeline (full event stream)
-- [ ] Vercel serverless API for agent management
 - [ ] Operator dashboard
-- [ ] Arcly production handoff hardening
+- [ ] Arcly production handoff hardening at scale
 - [ ] Public onboarding and documentation site
 
 ---
@@ -110,10 +123,10 @@ Remaining:
 
 | MCP | Current Use | Future Use |
 |-----|-------------|------------|
-| GitHub | Source control, commits | CI/CD, release automation |
+| GitHub | Source control, releases | CI/CD, release automation |
 | Neon | Agent memory + scoring | Branch-per-agent dev environments |
 | Vercel | API deployment | Serverless agent endpoints |
-| Cloudflare | Documented | Edge reputation, Workers agents |
+| Cloudflare | KV edge reputation | Edge Workers agents |
 | Linear | Task tracking | Sprint automation |
 | Notion | Project docs | Archivist knowledge base |
 | Firecrawl | Intent enrichment hook | Production enrichment pipeline |
@@ -122,11 +135,12 @@ Remaining:
 
 ---
 
-## Immediate Next Steps
+## Immediate Next Steps (post-v0.1)
 
 1. **Edge Workers prototype** — single Worker agent + KV reputation read at edge
 2. **Probabilistic swarm router** — weighted random selection over `rank_agents()`
 3. **KV backfill job** — bulk sync from Neon to KV for existing agents
 4. **Operator API** — `/api/agents` CRUD on Vercel
+5. **GitHub release tag** — publish `v0.1.0` with release notes from CHANGELOG
 
 See [getting-started.md](getting-started.md) to run what exists today.
