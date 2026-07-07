@@ -1,19 +1,21 @@
 # Serverless API Examples
 
-Replace `<your-app>` with your Vercel deployment URL. Set `FORGE_API_KEY` and `ARCLY_API_KEY` in the Vercel dashboard when auth is enabled.
+**Production:** https://forge-resonance.vercel.app
+
+Set `FORGE_API_KEY` and `ARCLY_API_KEY` in the Vercel dashboard when auth is enabled.
 
 ## Health
 
 ```bash
 # Liveness (public)
-curl https://<your-app>.vercel.app/api/health
+curl https://forge-resonance.vercel.app/api/health
 
 # Deep checks (requires FORGE_API_KEY when configured)
 curl -H "Authorization: Bearer $FORGE_API_KEY" \
-  "https://<your-app>.vercel.app/api/health?deep=1"
+  "https://forge-resonance.vercel.app/api/health?deep=1"
 
 # Fabric reputation snapshot
-curl https://<your-app>.vercel.app/api/fabric_health
+curl https://forge-resonance.vercel.app/api/fabric_health
 ```
 
 ## Swarm route (lightweight, serverless-safe)
@@ -21,7 +23,7 @@ curl https://<your-app>.vercel.app/api/fabric_health
 Returns ranked agent assignments without running full resonance cycles.
 
 ```bash
-curl -X POST https://<your-app>.vercel.app/api/swarm \
+curl -X POST https://forge-resonance.vercel.app/api/swarm \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $FORGE_API_KEY" \
   -d '{
@@ -44,7 +46,7 @@ curl -X POST https://<your-app>.vercel.app/api/swarm \
 For demos and tests on Vercel, pass `bound_agents` with lightweight outcome stubs instead of full `ResonanceAgent` instances.
 
 ```bash
-curl -X POST https://<your-app>.vercel.app/api/swarm \
+curl -X POST https://forge-resonance.vercel.app/api/swarm \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $FORGE_API_KEY" \
   -d '{
@@ -62,7 +64,7 @@ curl -X POST https://<your-app>.vercel.app/api/swarm \
 Arcly reports conversion outcomes to update Resonance Scores.
 
 ```bash
-curl -X POST https://<your-app>.vercel.app/api/arcly_feedback \
+curl -X POST https://forge-resonance.vercel.app/api/arcly_feedback \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ARCLY_API_KEY" \
   -d '{

@@ -141,5 +141,8 @@ Last updated: July 2026 · **v0.1.0 released**
 2. **Probabilistic swarm router** — weighted random selection over `rank_agents()`
 3. **KV backfill job** — bulk sync from Neon to KV for existing agents
 4. **Operator API** — `/api/agents` CRUD on Vercel
+5. **Edge KV on Vercel** — add Cloudflare credentials to production env
+
+**Live deployment:** https://forge-resonance.vercel.app (v0.1.0 production)
 
 See [getting-started.md](getting-started.md) to run what exists today.

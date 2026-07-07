@@ -1,6 +1,6 @@
 # ForgeResonance
 
-**[v0.1.0](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0)** · [Releases](https://github.com/manhatton31-svg/forge-resonance/releases) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+**[v0.1.0](https://github.com/manhatton31-svg/forge-resonance/releases/tag/v0.1.0)** · **[Live API](https://forge-resonance.vercel.app/api/health)** · [Releases](https://github.com/manhatton31-svg/forge-resonance/releases) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 **Earn distribution through demonstrated value — not ad spend.**
 
@@ -175,9 +175,11 @@ forge-resonance/
 
 ## Deployment
 
+**Live production:** https://forge-resonance.vercel.app
+
 ```bash
 vercel link && vercel --prod
-curl https://<your-app>.vercel.app/api/health?deep=1
+curl https://forge-resonance.vercel.app/api/health?deep=1
 ```
 
 Endpoints: `/api/health`, `/api/fabric_health`, `/api/swarm`, `/api/arcly_feedback`

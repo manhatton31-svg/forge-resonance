@@ -13,6 +13,22 @@ This guide covers deploying the ForgeResonance API layer to **Vercel** while kee
 
 The Vercel deployment is optimized for **webhooks**, **health checks**, **fabric reputation queries**, and **lightweight swarm routing** — not continuous agent loops.
 
+## Live deployment (v0.1.0)
+
+| Resource | URL |
+|----------|-----|
+| **Production** | https://forge-resonance.vercel.app |
+| Health | https://forge-resonance.vercel.app/api/health |
+| Deep health | https://forge-resonance.vercel.app/api/health?deep=1 |
+| Fabric health | https://forge-resonance.vercel.app/api/fabric_health |
+| Swarm API | https://forge-resonance.vercel.app/api/swarm |
+
+**Validated 2026-07-06:** `GET /api/health` (ok), `GET /api/health?deep=1` (Neon reachable), `GET /api/fabric_health` (ok), `POST /api/swarm` route mode (assignments returned).
+
+**Production env vars configured:** `DATABASE_URL`, `FORGE_STORAGE_BACKEND=neon`
+
+**Still manual (dashboard):** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_NAMESPACE`, `EDGE_REPUTATION_ENABLED=true` for edge KV; optional `FORGE_API_KEY`, `ARCLY_API_KEY`.
+
 ## Prerequisites
 
 1. [Vercel account](https://vercel.com) with CLI installed: `npm i -g vercel`
