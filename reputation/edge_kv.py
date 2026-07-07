@@ -260,8 +260,34 @@ def _default_http_request(
         return resp.status, resp.read()
 
 
+_edge_kv_singleton: CloudflareKVClient | None = None
+
+
 def create_edge_kv_client(
     config: EdgeReputationConfig | None = None,
+    *,
+    reuse: bool = True,
 ) -> CloudflareKVClient:
-    """Factory for CloudflareKVClient from environment config."""
-    return CloudflareKVClient(config=config or load_edge_reputation_config())
+    """
+    Factory for CloudflareKVClient from environment config.
+
+    When ``reuse=True`` (default) and no explicit config is passed, returns a
+    module-level singleton so warm serverless invocations reuse the REST client
+    state (reachability cache, last sync timestamps).
+    """
+    global _edge_kv_singleton
+    if config is not None:
+        return CloudflareKVClient(config=config)
+    if reuse:
+        if _edge_kv_singleton is None:
+            _edge_kv_singleton = CloudflareKVClient(
+                config=load_edge_reputation_config()
+            )
+        return _edge_kv_singleton
+    return CloudflareKVClient(config=load_edge_reputation_config())
+
+
+def reset_edge_kv_client() -> None:
+    """Clear the cached client (for tests or config hot-reload)."""
+    global _edge_kv_singleton
+    _edge_kv_singleton = None

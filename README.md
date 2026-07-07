@@ -341,15 +341,28 @@ See [docs/principles.md](docs/principles.md).
 
 ## Deployment
 
-**Vercel (API layer):**
+### Vercel (API layer)
 
 ```bash
 npm i -g vercel
-vercel
-# Set DATABASE_URL, XAI_API_KEY, ARCLY_API_KEY in dashboard
+vercel link
+vercel --prod
 ```
 
-**Cloudflare (planned):** Edge agents + KV reputation — see [docs/architecture.md](docs/architecture.md#deployment-topology).
+**Endpoints:** `/api/health`, `/api/fabric_health`, `/api/arcly_feedback`, `/api/swarm`
+
+Set secrets in the Vercel dashboard (never commit): `DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_NAMESPACE`, `ARCLY_API_KEY`, optional `FORGE_API_KEY`.
+
+```bash
+# Quick health check after deploy
+curl https://<your-app>.vercel.app/api/health?deep=1
+```
+
+Full guide: [docs/deployment.md](docs/deployment.md) — env vars, KV setup, serverless swarm limits, troubleshooting.
+
+**Local dev:** `pip install -r requirements-dev.txt` (tests) · `pip install -r requirements.txt` (Vercel parity)
+
+**Cloudflare Workers (planned):** Long-running edge agents — see [docs/architecture.md](docs/architecture.md).
 
 ---
 

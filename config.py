@@ -43,6 +43,62 @@ NEON_DATABASE = os.getenv("NEON_DATABASE", "neondb")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # ---------------------------------------------------------------------------
+# Deployment / serverless (Vercel)
+# ---------------------------------------------------------------------------
+
+VERCEL = os.getenv("VERCEL", "") == "1"
+VERCEL_ENV = os.getenv("VERCEL_ENV", "development")
+VERCEL_REGION = os.getenv("VERCEL_REGION", "")
+VERCEL_URL = os.getenv("VERCEL_URL", "")
+
+# Cap per-function duration on Vercel (seconds). Hobby default is 10; Pro up to 60+.
+VERCEL_FUNCTION_MAX_DURATION = int(os.getenv("VERCEL_FUNCTION_MAX_DURATION", "60"))
+
+# When true, apply serverless-safe defaults (shorter swarm timeouts, less parallelism).
+SERVERLESS_MODE = (
+    os.getenv("SERVERLESS_MODE", "auto").lower() == "true"
+    or (os.getenv("SERVERLESS_MODE", "auto").lower() == "auto" and VERCEL)
+)
+
+
+def is_serverless() -> bool:
+    """True when running inside a serverless host (Vercel, Lambda, etc.)."""
+    if SERVERLESS_MODE:
+        return True
+    if VERCEL:
+        return True
+    return os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
+
+
+def is_secret_configured(name: str) -> bool:
+    """Return whether an environment variable is set (never expose the value)."""
+    return bool(os.getenv(name, "").strip())
+
+
+def redact_env_snapshot() -> dict[str, bool]:
+    """Safe snapshot of which secrets are configured — for health endpoints only."""
+    return {
+        "database_url": is_secret_configured("DATABASE_URL"),
+        "xai_api_key": is_secret_configured("XAI_API_KEY"),
+        "arcly_api_key": is_secret_configured("ARCLY_API_KEY"),
+        "cloudflare_api_token": is_secret_configured("CLOUDFLARE_API_TOKEN"),
+        "cloudflare_kv_namespace": is_secret_configured("CLOUDFLARE_KV_NAMESPACE"),
+        "sentry_dsn": is_secret_configured("SENTRY_DSN"),
+        "axiom_token": is_secret_configured("AXIOM_TOKEN"),
+    }
+
+
+def get_deployment_info() -> dict[str, str | bool]:
+    """Deployment context for observability and health checks."""
+    return {
+        "platform": "vercel" if VERCEL else "local",
+        "environment": VERCEL_ENV,
+        "region": VERCEL_REGION,
+        "serverless": is_serverless(),
+        "function_max_duration_s": VERCEL_FUNCTION_MAX_DURATION,
+    }
+
+# ---------------------------------------------------------------------------
 # Resonance Score parameters
 # ---------------------------------------------------------------------------
 
@@ -218,8 +274,11 @@ EPISODIC_MEMORY_LIMIT = int(os.getenv("EPISODIC_MEMORY_LIMIT", "1000"))
 # Swarm execution (Fabric multi-agent coordination)
 # ---------------------------------------------------------------------------
 
-SWARM_AGENT_TIMEOUT = float(os.getenv("SWARM_AGENT_TIMEOUT", "120.0"))
+_SWARM_TIMEOUT_DEFAULT = "25.0" if is_serverless() else "120.0"
+SWARM_AGENT_TIMEOUT = float(os.getenv("SWARM_AGENT_TIMEOUT", _SWARM_TIMEOUT_DEFAULT))
 SWARM_MAX_PARALLEL = max(1, int(os.getenv("SWARM_MAX_PARALLEL", "3")))
+SWARM_SERVERLESS_TIMEOUT = float(os.getenv("SWARM_SERVERLESS_TIMEOUT", "25.0"))
+SWARM_SERVERLESS_MAX_PARALLEL = max(1, int(os.getenv("SWARM_SERVERLESS_MAX_PARALLEL", "2")))
 SwarmConsensusStrategy = Literal["majority", "quality_weighted"]
 _SWARM_CONSENSUS_RAW = os.getenv("SWARM_CONSENSUS_STRATEGY", "quality_weighted").lower()
 SWARM_CONSENSUS_STRATEGY: SwarmConsensusStrategy = (
@@ -240,9 +299,18 @@ class SwarmExecutionConfig:
 
 def load_swarm_config() -> SwarmExecutionConfig:
     """Load swarm execution settings from environment."""
+    timeout = SWARM_AGENT_TIMEOUT
+    max_parallel = SWARM_MAX_PARALLEL
+    if is_serverless():
+        if timeout <= 0 or timeout > SWARM_SERVERLESS_TIMEOUT:
+            timeout = SWARM_SERVERLESS_TIMEOUT
+        max_parallel = min(max_parallel, SWARM_SERVERLESS_MAX_PARALLEL)
+        max_duration = float(VERCEL_FUNCTION_MAX_DURATION)
+        if max_duration > 0:
+            timeout = min(timeout, max(5.0, max_duration - 5.0))
     return SwarmExecutionConfig(
-        agent_timeout_s=SWARM_AGENT_TIMEOUT,
-        max_parallel=SWARM_MAX_PARALLEL,
+        agent_timeout_s=timeout,
+        max_parallel=max_parallel,
         consensus_strategy=SWARM_CONSENSUS_STRATEGY,
     )
 
@@ -279,5 +347,20 @@ class ForgeConfig:
 def load_config() -> ForgeConfig:
     """Load configuration from environment with sane defaults."""
     cfg = ForgeConfig()
-    cfg.ensure_directories()
+    if not is_serverless():
+        cfg.ensure_directories()
     return cfg
+
+
+def ping_database(timeout_s: float = 3.0) -> dict[str, bool | str]:
+    """Lightweight Neon/Postgres reachability check for deployment health."""
+    if not DATABASE_URL:
+        return {"configured": False, "reachable": False, "detail": "not_configured"}
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=int(timeout_s))
+        conn.close()
+        return {"configured": True, "reachable": True, "detail": "ok"}
+    except Exception as exc:
+        return {"configured": True, "reachable": False, "detail": type(exc).__name__}

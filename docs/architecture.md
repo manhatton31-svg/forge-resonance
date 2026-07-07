@@ -255,6 +255,8 @@ Unbound agents, timeouts, and exceptions record `OutcomeTier.FAILURE` without do
 
 Demo: `python -m demo --swarm-only`
 
+**Serverless deployment:** Vercel hosts `/api/health`, `/api/fabric_health`, `/api/arcly_feedback`, and `/api/swarm`. Edge KV uses the REST API (no Workers binding). Swarm `mode=route` is serverless-safe; full agent cycles belong on Workers or local runtime. See [deployment.md](deployment.md).
+
 ### 6. Demo & Bootstrap Layer (`demo/`)
 
 Interactive showcase without API keys:

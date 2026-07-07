@@ -1,11 +1,7 @@
-# ForgeResonance Protocol — Python dependencies
+# ForgeResonance Protocol — production Python dependencies (Vercel + Neon)
 
 # Database (Neon Postgres)
 psycopg2-binary>=2.9.9
-
-# Testing
-pytest>=8.0.0
-pytest-cov>=4.1.0
 
 # Observability (optional — install when configuring)
 sentry-sdk>=2.0.0

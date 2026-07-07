@@ -2,25 +2,34 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "name": "forge-resonance",
-  "builds": [
-    {
-      "src": "api/**/*.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    }
-  ],
-  "env": {
-    "FORGE_STORAGE_BACKEND": "neon",
-    "LOG_LEVEL": "INFO"
-  },
+  "installCommand": "pip install -r requirements.txt",
   "functions": {
-    "api/**/*.py": {
-      "maxDuration": 30
+    "api/health.py": {
+      "maxDuration": 15,
+      "memory": 512
+    },
+    "api/fabric_health.py": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "api/arcly_feedback.py": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "api/swarm.py": {
+      "maxDuration": 60,
+      "memory": 1024
     }
-  }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ]
 }

@@ -1,23 +1,21 @@
 """
 Vercel serverless health check endpoint.
 
-Deploy: vercel deploy
 Route: GET /api/health
+Query: ?deep=1 for database ping + fabric health (slower cold start)
 """
 
+from __future__ import annotations
+
 from http.server import BaseHTTPRequestHandler
-import json
+from urllib.parse import parse_qs, urlparse
+
+from api.runtime import build_health_payload, send_json
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = {
-            "status": "ok",
-            "service": "forge-resonance",
-            "version": "0.1.0",
-            "fabric": "operational",
-        }
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(body).encode())
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        deep = params.get("deep", ["0"])[0] in ("1", "true", "yes")
+        send_json(self, 200, build_health_payload(deep=deep))

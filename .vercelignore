@@ -1,0 +1,11 @@
+data/
+tests/
+demo/
+docs/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+requirements-dev.txt
+.env
+.env.local
