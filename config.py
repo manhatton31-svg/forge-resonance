@@ -81,6 +81,7 @@ def redact_env_snapshot() -> dict[str, bool]:
         "database_url": is_secret_configured("DATABASE_URL"),
         "xai_api_key": is_secret_configured("XAI_API_KEY"),
         "arcly_api_key": is_secret_configured("ARCLY_API_KEY"),
+        "forge_api_key": is_secret_configured("FORGE_API_KEY"),
         "cloudflare_api_token": is_secret_configured("CLOUDFLARE_API_TOKEN"),
         "cloudflare_kv_namespace": is_secret_configured("CLOUDFLARE_KV_NAMESPACE"),
         "sentry_dsn": is_secret_configured("SENTRY_DSN"),
@@ -182,6 +183,46 @@ def load_arcly_config() -> ArclyConfig:
         retry_delay_seconds=ARCLY_HANDOFF_RETRY_DELAY_SECONDS,
         mode=ARCLY_MODE,
         feedback_enabled=ARCLY_FEEDBACK_ENABLED,
+    )
+
+# ---------------------------------------------------------------------------
+# API security (Vercel serverless hardening)
+# ---------------------------------------------------------------------------
+
+FORGE_API_KEY = os.getenv("FORGE_API_KEY", "")
+API_RATE_LIMIT_ENABLED = os.getenv("API_RATE_LIMIT_ENABLED", "true").lower() == "true"
+API_RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("API_RATE_LIMIT_WINDOW_SECONDS", "60")))
+API_RATE_LIMIT_SWARM = max(1, int(os.getenv("API_RATE_LIMIT_SWARM", "30")))
+API_RATE_LIMIT_ARCLY = max(1, int(os.getenv("API_RATE_LIMIT_ARCLY", "60")))
+API_HEALTH_DEEP_AUTH = os.getenv("API_HEALTH_DEEP_AUTH", "true").lower() == "true"
+API_ARCLY_AUTH_REQUIRED = os.getenv("API_ARCLY_AUTH_REQUIRED", "true").lower() == "true"
+
+
+@dataclass(frozen=True)
+class ApiSecurityConfig:
+    """Runtime API security settings."""
+
+    forge_api_key: str = FORGE_API_KEY
+    arcly_api_key: str = ARCLY_API_KEY
+    rate_limit_enabled: bool = API_RATE_LIMIT_ENABLED
+    rate_limit_window_seconds: int = API_RATE_LIMIT_WINDOW_SECONDS
+    rate_limit_swarm: int = API_RATE_LIMIT_SWARM
+    rate_limit_arcly: int = API_RATE_LIMIT_ARCLY
+    health_deep_auth: bool = API_HEALTH_DEEP_AUTH
+    arcly_auth_required: bool = API_ARCLY_AUTH_REQUIRED
+
+
+def load_api_security_config() -> ApiSecurityConfig:
+    """Load API auth and rate-limit settings from environment."""
+    return ApiSecurityConfig(
+        forge_api_key=FORGE_API_KEY,
+        arcly_api_key=ARCLY_API_KEY,
+        rate_limit_enabled=API_RATE_LIMIT_ENABLED,
+        rate_limit_window_seconds=API_RATE_LIMIT_WINDOW_SECONDS,
+        rate_limit_swarm=API_RATE_LIMIT_SWARM,
+        rate_limit_arcly=API_RATE_LIMIT_ARCLY,
+        health_deep_auth=API_HEALTH_DEEP_AUTH,
+        arcly_auth_required=API_ARCLY_AUTH_REQUIRED,
     )
 
 # ---------------------------------------------------------------------------

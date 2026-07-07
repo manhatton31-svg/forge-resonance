@@ -96,7 +96,54 @@ curl -X POST https://<your-app>.vercel.app/api/swarm \
   }'
 ```
 
-Set `FORGE_API_KEY` in Vercel and pass `Authorization: Bearer <key>` when configured.
+Pass `Authorization: Bearer <FORGE_API_KEY>` when the key is configured in Vercel.
+
+## Authentication
+
+Routes use optional Bearer token auth. When a secret is configured in the environment, requests must include `Authorization: Bearer <token>`.
+
+| Route | Auth env var | When required |
+|-------|--------------|---------------|
+| `POST /api/swarm` | `FORGE_API_KEY` | When `FORGE_API_KEY` is set |
+| `GET /api/health?deep=1` | `FORGE_API_KEY` | When `FORGE_API_KEY` is set and `API_HEALTH_DEEP_AUTH=true` (default) |
+| `POST /api/arcly_feedback` | `ARCLY_API_KEY` | When `ARCLY_API_KEY` is set and `API_ARCLY_AUTH_REQUIRED=true` (default) |
+| `GET /api/health` | — | Public |
+| `GET /api/fabric_health` | — | Public |
+
+```bash
+curl -H "Authorization: Bearer $FORGE_API_KEY" \
+  "https://<your-app>.vercel.app/api/health?deep=1"
+```
+
+### Error response format
+
+All API errors return a consistent JSON envelope:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Request validation failed",
+    "request_id": "a1b2c3d4",
+    "details": [{"field": "agents", "message": "required non-empty array"}]
+  }
+}
+```
+
+Internal errors never include stack traces or secret values. Successful responses include `request_id` for correlation.
+
+## Rate limiting
+
+In-memory fixed-window rate limits apply per route and client IP (`X-Forwarded-For` on Vercel). Limits are per serverless instance — for strict global limits, add Vercel Firewall or an edge proxy.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `API_RATE_LIMIT_ENABLED` | `true` | Master switch |
+| `API_RATE_LIMIT_WINDOW_SECONDS` | `60` | Window size |
+| `API_RATE_LIMIT_SWARM` | `30` | Max POST `/api/swarm` per window |
+| `API_RATE_LIMIT_ARCLY` | `60` | Max POST `/api/arcly_feedback` per window |
+
+When limited, the API returns `429` with `Retry-After` header and `error.code: rate_limited`.
 
 ## Required environment variables
 
@@ -111,7 +158,10 @@ Set these in the **Vercel dashboard** (Settings → Environment Variables). Neve
 | `CLOUDFLARE_ACCOUNT_ID` | If edge enabled | Cloudflare account |
 | `CLOUDFLARE_KV_NAMESPACE` | If edge enabled | KV namespace ID |
 | `ARCLY_API_KEY` | If using feedback | Webhook auth (`Bearer` token) |
-| `FORGE_API_KEY` | Optional | Protects `/api/swarm` |
+| `FORGE_API_KEY` | Recommended | Bearer auth for `/api/swarm` and deep health |
+| `API_RATE_LIMIT_*` | Optional | Per-route rate limits (see above) |
+| `API_HEALTH_DEEP_AUTH` | Optional | `true` = require key for `?deep=1` |
+| `API_ARCLY_AUTH_REQUIRED` | Optional | `true` = require `ARCLY_API_KEY` when set |
 | `XAI_API_KEY` | Optional | Grok generation (not needed for routing) |
 
 See [.env.example](../.env.example) for the full list.
@@ -156,7 +206,9 @@ When `VERCEL=1`, `load_swarm_config()` automatically caps agent timeout and para
 | `edge_reachable: false` | Token permissions, namespace ID, `EDGE_REPUTATION_ENABLED` |
 | Database unreachable | `DATABASE_URL` SSL mode, Neon IP allowlist |
 | Swarm timeouts | Lower `SWARM_SERVERLESS_TIMEOUT`, use `mode=route` |
-| 401 on swarm | Set `FORGE_API_KEY` or omit Authorization if unset |
+| 401 on swarm | Pass `Authorization: Bearer $FORGE_API_KEY` |
+| 429 rate limited | Wait for `Retry-After` or raise limits via env |
+| validation_error | Check `error.details` for field-level messages |
 | Import errors on deploy | Ensure `requirements.txt` includes `psycopg2-binary` |
 
 ## Local development with Vercel dev

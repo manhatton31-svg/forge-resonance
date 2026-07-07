@@ -43,31 +43,25 @@ def get_reputation_layer() -> ReputationLayer:
 
 
 def read_json_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+    from api.errors import ApiError, validation_detail
+
     length = int(handler.headers.get("Content-Length", 0))
+    if length > 1_048_576:
+        raise ApiError.bad_request("Request body too large")
     raw = handler.rfile.read(length).decode() if length else "{}"
     try:
         body = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("invalid json") from exc
+    except json.JSONDecodeError:
+        raise ApiError.validation(
+            "Invalid JSON body",
+            details=[validation_detail("body", "must be valid JSON")],
+        )
     if not isinstance(body, dict):
-        raise ValueError("expected JSON object")
+        raise ApiError.validation(
+            "Invalid JSON body",
+            details=[validation_detail("body", "must be a JSON object")],
+        )
     return body
-
-
-def send_json(handler: BaseHTTPRequestHandler, status: int, body: dict[str, Any]) -> None:
-    payload = json.dumps(body, default=str).encode()
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json")
-    handler.send_header("Cache-Control", "no-store")
-    handler.end_headers()
-    handler.wfile.write(payload)
-
-
-def verify_bearer(handler: BaseHTTPRequestHandler, expected_key: str) -> bool:
-    if not expected_key:
-        return True
-    auth = handler.headers.get("Authorization", "")
-    return auth == f"Bearer {expected_key}"
 
 
 def build_health_payload(*, deep: bool = False) -> dict[str, Any]:
