@@ -437,11 +437,11 @@ def run_multi_agent_ranking_demo(
 
     print_ranking(ranked, print_fn=print_fn)
     if show_banners:
-        section("Swarm scaling note", print_fn=print_fn)
+        section("What's next", print_fn=print_fn)
         print_fn(
-            "  Today: rank_agents() orders agents by selection weight.\n"
-            "  Next:  Fabric router samples proportionally across edge agents\n"
-            "         (Cloudflare KV reputation cache + Neon source of truth)."
+            "  Swarm execution:  python -m demo --swarm-only\n"
+            "  Examples:         python examples/swarm_execute.py\n"
+            "  Extend:           docs/extending.md"
         )
 
     return ranked

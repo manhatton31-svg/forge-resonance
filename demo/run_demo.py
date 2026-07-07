@@ -33,27 +33,20 @@ DEMO_EPILOG = """
 Demo phases
 ───────────
   Default (no flags)
-    Runs both phases below in sequence.
+    Single-agent (4 cycles) then multi-agent ranking table.
 
-  Single-agent phase (--single-only)
-    Agent: atlas-demo
-    Intents: purchase, comparison, research, support (4 cycles)
-    Pipeline per cycle:
-      Harvest   — EmbeddingIntentHarvester detects intent type + confidence
-      Generate  — ResonanceEngine builds payload (template mode, no API key)
-      Inject    — ValueInjector delivers formatted resonant value
-      Handoff   — ArclyHandoff dry-run with reputation context
-      Reflect   — ResonanceScoreManager updates score and analytics
+  Single-agent (--single-only)
+    Agent: atlas-demo · intents: purchase, comparison, research, support
+    Pipeline: Harvest → Generate → Inject → Handoff → Reflect
 
-  Multi-agent phase (--multi-only or second half of default)
+  Multi-agent (--multi-only)
     Agents: atlas-analytics, nova-research, echo-support
-    Competing on overlapping commercial intents with different cycle counts.
-    Demonstrates ReputationLayer.rank_agents() and selection weight
-    (visibility × score/100) — the primitive for Fabric swarm routing.
+    Demonstrates ReputationLayer.rank_agents() and selection weight.
 
-  Swarm routing phase (--swarm-only)
-    Routes purchase, research, and support intents via IntentRouter +
-    SwarmCoordinator. Shows capability matching + edge-aware reputation.
+  Swarm execution (--swarm-only)
+    SwarmCoordinator.execute() on purchase, research, and support intents.
+    Runs live resonance cycles, shows per-agent outcomes, metrics, and
+    broadcast consensus. Capability match + edge-aware reputation.
 
 Output modes
 ────────────
@@ -61,7 +54,13 @@ Output modes
   --verbose   — full formatted resonant messages for each cycle
   --quiet     — suppress banners only (cycle results still print)
 
-No API keys required. Uses template generation and in-memory reputation.
+Next steps
+──────────
+  python examples/single_agent.py     # minimal programmatic integration
+  python examples/swarm_execute.py    # swarm without demo UI
+  python -m pytest tests/ -q        # 172 tests
+
+No API keys required. Template generation + in-memory reputation.
 """
 
 
@@ -90,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--swarm-only",
         action="store_true",
-        help="Run swarm intent routing demo (capability + reputation)",
+        help="Run swarm execution demo (route, execute, aggregate outcomes)",
     )
     parser.add_argument(
         "--verbose",
@@ -136,7 +135,10 @@ def main(argv: list[str] | None = None) -> int:
             show_banners=not args.quiet,
         )
 
-    print("\nDemo complete. Run with --help to see what each phase demonstrates.")
+    print(
+        "\nDemo complete.\n"
+        "  Next: python examples/single_agent.py  |  python -m demo --help"
+    )
     return 0
 
 

@@ -1,8 +1,15 @@
 """
-Shared runtime utilities for Vercel serverless API handlers.
+Shared runtime for Vercel serverless API handlers.
 
-Provides cached service instances, JSON helpers, health payloads, and swarm
-routing/execution for short-lived environments.
+**Entry points used by route modules:**
+
+- ``get_reputation_layer()`` — cached ``ReputationLayer`` for warm invocations
+- ``build_health_payload(deep=True)`` — liveness + DB/KV checks
+- ``run_swarm_route(body)`` / ``run_swarm_execute(body)`` — swarm API handlers
+- ``build_fabric_health_payload()`` — edge + reputation snapshot
+
+Auth and rate limits live in ``api/security.py``; errors in ``api/errors.py``.
+See ``examples/api_calls.md`` for curl examples.
 """
 
 from __future__ import annotations

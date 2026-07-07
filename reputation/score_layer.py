@@ -1,9 +1,16 @@
 """
 Decentralized Reputation / Resonance Score Layer.
 
-Aggregates agent scores, outcome history, and visibility weighting across the
-Fabric. Persists to Neon Postgres when available, with SQLite fallback for
-local sovereignty. Designed for future replication to Cloudflare KV at the edge.
+**Quick start:**
+
+    layer = ReputationLayer()  # or ReputationLayer(create_score_manager())
+    layer.record_outcome(agent_id, outcome="success", quality=0.9)
+    ranked = layer.rank_agents(agent_ids, agent_names=names)
+
+``ResonanceScoreManager`` handles score math and persistence; ``ReputationLayer``
+is the Fabric-facing facade used by ``IntentRouter`` and ``SwarmCoordinator``.
+
+Edge: enable ``EDGE_REPUTATION_ENABLED`` for Cloudflare KV reads after outcomes.
 """
 
 from __future__ import annotations
@@ -716,10 +723,12 @@ def create_score_manager(
 
 class ReputationLayer:
     """
-    Fabric-wide reputation aggregation.
+    Fabric-wide reputation facade — the main entry point for routing and swarms.
 
-    Delegates to ``ResonanceScoreManager`` for scores, analytics, and ranking.
-    Designed for replication to Cloudflare KV for decentralized edge lookups.
+    Use ``rank_agents()`` for multi-agent selection weights and
+    ``record_outcome()`` after each resonance cycle. Delegates persistence
+    and score math to ``ResonanceScoreManager``; syncs to Cloudflare KV when
+    ``EDGE_REPUTATION_ENABLED`` is set.
     """
 
     def __init__(

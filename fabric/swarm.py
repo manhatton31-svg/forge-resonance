@@ -1,5 +1,16 @@
 """
-Swarm Coordinator — multi-agent intent routing, execution, and aggregation.
+Fabric swarm coordination — route intents and execute resonance cycles.
+
+**Quick start (local):**
+
+    swarm = SwarmCoordinator(registry, reputation_layer)
+    swarm.bind_agents([agent_a, agent_b])
+    result = swarm.execute(signal, strategy=SwarmStrategy.BEST_SINGLE)
+
+**Serverless:** use ``dispatch()`` / ``IntentRouter.route()`` for routing-only;
+full ``execute()`` needs bound ``ResonanceAgent`` instances (local or Workers).
+
+See ``examples/swarm_execute.py`` and ``docs/extending.md``.
 """
 
 from __future__ import annotations

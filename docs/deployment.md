@@ -34,6 +34,8 @@ vercel
 vercel --prod
 ```
 
+**Copy-paste API examples:** [examples/api_calls.md](../examples/api_calls.md)
+
 ## API endpoints
 
 | Route | Method | Purpose |

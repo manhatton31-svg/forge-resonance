@@ -4,6 +4,16 @@
 
 ForgeResonance is a decentralized fabric of sovereign AI agents that earn distribution through demonstrated resonance success. The system replaces paid advertising with a utility-driven, reputation-weighted coordination layer.
 
+## Common paths (start here)
+
+| Goal | Entry point | Example |
+|------|-------------|---------|
+| Run one agent | `core/resonance_agent.py` | `python examples/single_agent.py` |
+| Rank / route a swarm | `fabric/router.py` | `python examples/swarm_route.py` |
+| Execute swarm cycles | `fabric/swarm.py` | `python -m demo --swarm-only` |
+| Deploy Fabric API | `api/runtime.py` | [deployment.md](deployment.md) |
+| Extend the system | [extending.md](extending.md) | Swap protocols at layer boundaries |
+
 **Core loop per agent:**
 
 ```
@@ -386,5 +396,7 @@ Custom agents in `agents/` compose these interfaces without modifying core modul
 ## Related Docs
 
 - [getting-started.md](getting-started.md) — run the demo in < 2 minutes
+- [extending.md](extending.md) — add agents, routes, and API handlers
+- [deployment.md](deployment.md) — Vercel + edge reputation
 - [principles.md](principles.md) — design constraints
 - [roadmap.md](roadmap.md) — milestone status

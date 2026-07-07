@@ -91,18 +91,31 @@ python -m demo --help
 |------|--------|
 | `--single-only` | Skip multi-agent ranking |
 | `--multi-only` | Ranking showcase only |
+| `--swarm-only` | Swarm execution: route, run agents, aggregate outcomes |
 | `--verbose` | Print full formatted resonant messages |
+| `--quiet` | Suppress banners (cycle output still prints) |
 | `--data-dir PATH` | Custom agent memory directory |
+
+**Runnable examples** (no demo UI):
+
+```bash
+python examples/single_agent.py
+python examples/swarm_route.py
+python examples/swarm_execute.py
+```
+
+See [examples/README.md](../examples/README.md).
 
 ---
 
 ## Step 4: Run tests
 
 ```bash
+pip install -r requirements-dev.txt   # includes pytest
 python -m pytest tests/ -v
 ```
 
-Expect ~110 passing tests. One intent-detection test may be flaky due to embedding thresholds in CI — re-run if needed.
+Expect **172** passing tests.
 
 ---
 
@@ -201,5 +214,7 @@ Handoffs include reputation snapshot and offer bundle. Arcly can POST outcomes t
 ## Next reading
 
 - [architecture.md](architecture.md) — layer-by-layer design
+- [extending.md](extending.md) — add agents, swarm routes, API handlers
+- [deployment.md](deployment.md) — Vercel + Cloudflare KV
 - [principles.md](principles.md) — design constraints and glossary
 - [roadmap.md](roadmap.md) — milestone status and future work
